@@ -1,0 +1,15 @@
+# Example weekly targets file. Copy over config/targets.yaml and tune weekly.
+
+enabled: true
+
+# Court preference order (McCarren: 5 and 6)
+courts: [5, 6]
+
+targets:
+  # Any Friday slot starting 5pm–7pm (i.e. 5:00 or 6:00 start)
+  - day: friday
+    between: ["17:00", "19:00"]
+
+  # Any Saturday slot starting 9am–11am (9:00 or 10:00 start)
+  - day: saturday
+    between: ["09:00", "11:00"]

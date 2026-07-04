@@ -1,0 +1,12 @@
+# secrets — never commit
+.env
+
+# runtime artifacts: ledger, screenshots, logs, browser profile
+storage/
+
+# local toolchain (bundled Node.js)
+.tools/
+
+node_modules/
+dist/
+*.har
