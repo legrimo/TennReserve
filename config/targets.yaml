@@ -1,21 +1,15 @@
-# TennReserve weekly booking targets — edit this file week to week.
-#
-# enabled: master switch. Set false to pause all booking without stopping the watcher.
-# courts:  preference order. McCarren has courts 5 and 6.
-# targets: book any 1-hour slot whose START time falls inside [from, to) on that day.
-#          Times are 24h "HH:MM". Earlier targets in the list win; within a target,
-#          earlier times win, then court preference order.
-#
-# Site rules the bot respects automatically:
-#   - bookable up to 7 days ahead, never same-day
-#   - max one active reservation per day (ledger enforces this)
-
 enabled: false
-
-courts: [5, 6]
-
+courts:
+  - 5
+  - 6
+bookingMode: first_match
 targets:
   - day: friday
-    between: ["17:00", "19:00"]
+    between:
+      - 17:00
+      - 19:00
   - day: saturday
-    between: ["09:00", "11:00"]
+    between:
+      - 09:00
+      - 11:00
+

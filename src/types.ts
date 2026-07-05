@@ -19,10 +19,41 @@ export interface Target {
   between: [string, string];
 }
 
+export type BookingMode = "first_match" | "multi_match";
+
 export interface TargetsConfig {
   enabled: boolean;
   courts: number[];
+  bookingMode?: BookingMode;
   targets: Target[];
+}
+
+export type GridCellStatus = "available" | "booked" | "unavailable" | "held";
+
+export interface GridCell {
+  date: string;
+  day: string;
+  court: number;
+  time24: string;
+  status: GridCellStatus;
+  slotId?: string;
+  url?: string;
+}
+
+export interface GridDay {
+  date: string;
+  day: string;
+  published: boolean;
+  cells: GridCell[];
+}
+
+export interface AvailabilitySnapshot {
+  fetchedAt: string;
+  publishedDates: string[];
+  candidateDate: string | null;
+  today: string;
+  days: GridDay[];
+  slots: Slot[];
 }
 
 export interface BookingRecord {
@@ -42,4 +73,33 @@ export interface BookingResult {
   confirmation?: string;
   screenshot?: string;
   error?: string;
+}
+
+export type AttemptStatus = "draft" | "scheduled" | "completed" | "cancelled" | "failed";
+
+export interface SlotPick {
+  date: string;
+  day: string;
+  time24: string;
+  court: number;
+}
+
+export interface BookingAttempt {
+  id: string;
+  name?: string;
+  status: AttemptStatus;
+  slots: SlotPick[];
+  createdAt: string;
+  scheduledAt?: string;
+  bookedSlot?: SlotPick & { slotId: string; confirmation: string };
+  error?: string;
+}
+
+export type DayZone = "today" | "published" | "staging";
+
+export interface CalendarSnapshot {
+  today: string;
+  msUntilMidnight: number;
+  days: GridDay[];
+  dayZones: Record<string, DayZone>;
 }

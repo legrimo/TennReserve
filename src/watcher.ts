@@ -5,11 +5,12 @@ import { parseAvailability } from "./parser.js";
 import { hasBookingOn } from "./ledger.js";
 import { book } from "./booker.js";
 import { log, notify } from "./notify.js";
+import { listScheduledAttempts, matchAttemptSlot, completeAttempt } from "./attempts.js";
 import type { Slot, TargetsConfig } from "./types.js";
 
-const POLL_MS = 60_000; // normal cadence
-const BURST_MS = 10_000; // right after midnight ET, when the new 7th day is released
-const DISABLED_MS = 5 * 60_000; // check config less often while disabled
+const POLL_MS = 60_000;
+const BURST_MS = 10_000;
+const DISABLED_MS = 5 * 60_000;
 const WAF_BACKOFF_MAX_MS = 15 * 60_000;
 
 function todayIso(): string {
@@ -17,26 +18,21 @@ function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Burst window: 00:00–00:10 local (machine assumed to be in America/New_York, same as the site). */
 function inMidnightBurst(): boolean {
   const d = new Date();
   return d.getHours() === 0 && d.getMinutes() < 10;
 }
 
-/**
- * Pick the best slot per the config: earlier target in the list wins,
- * then earlier start time, then court preference order.
- * Same-day slots and days already booked (ledger) are excluded.
- */
+/** Legacy yaml range matching — kept for CLI / backward compat. */
 export function matchSlots(slots: Slot[], cfg: TargetsConfig): Slot[] {
   const today = todayIso();
   const courtRank = new Map(cfg.courts.map((c, i) => [c, i]));
 
   const candidates: { slot: Slot; targetIdx: number }[] = [];
   for (const slot of slots) {
-    if (slot.date <= today) continue; // no same-day booking (site rule)
+    if (slot.date <= today) continue;
     if (!courtRank.has(slot.court)) continue;
-    if (hasBookingOn(slot.date)) continue; // one reservation per day
+    if (hasBookingOn(slot.date)) continue;
     const idx = cfg.targets.findIndex(
       (t) => t.day === slot.day && slot.time24 >= t.between[0] && slot.time24 < t.between[1]
     );
@@ -52,6 +48,11 @@ export function matchSlots(slots: Slot[], cfg: TargetsConfig): Slot[] {
   });
 
   return candidates.map((c) => c.slot);
+}
+
+function filterBookable(slots: Slot[]): Slot[] {
+  const today = todayIso();
+  return slots.filter((s) => s.date > today && !hasBookingOn(s.date));
 }
 
 async function fetchAvailability(): Promise<string> {
@@ -73,32 +74,69 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
   while (true) {
     let interval = POLL_MS;
     try {
-      const cfg = loadTargets(); // re-read every cycle: weekly edits apply live
+      const cfg = loadTargets();
+      const scheduled = listScheduledAttempts();
+      const hasWork = cfg.enabled && (scheduled.length > 0 || cfg.targets.length > 0);
 
-      if (!cfg.enabled) {
+      if (!hasWork) {
         interval = DISABLED_MS;
-        log("Booking disabled in config/targets.yaml (enabled: false) — standing by");
-      } else if (cfg.targets.length === 0) {
-        interval = DISABLED_MS;
-        log("No targets configured — standing by");
+        log(
+          scheduled.length === 0 && cfg.targets.length === 0
+            ? "No scheduled attempts or yaml targets — standing by"
+            : "Booking disabled (enabled: false) — standing by"
+        );
       } else {
         const html = await fetchAvailability();
         wafBackoff = 0;
-        const slots = parseAvailability(html);
-        const matches = matchSlots(slots, cfg);
-        log(`${slots.length} open slot(s), ${matches.length} matching target(s)`);
+        const slots = filterBookable(parseAvailability(html));
+        log(`${slots.length} open bookable slot(s), ${scheduled.length} scheduled attempt(s)`);
 
-        if (matches.length > 0) {
-          const slot = matches[0];
-          log(`MATCH: ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking now`);
-          const result = await book(slot, { headless: opts.headless });
-          if (result.ok) {
-            log(`Booked ${slot.date} ${slot.time24} — confirmation ${result.confirmation}`);
-          } else {
-            log(`Booking failed: ${result.error} — will retry on next matching slot`);
-            await sleep(POLL_MS); // brief cooldown so a broken flow doesn't hammer the site
+        let booked = false;
+
+        // Priority 1: scheduled booking attempts (explicit slot picks)
+        if (cfg.enabled) {
+          for (const attempt of scheduled) {
+            const slot = matchAttemptSlot(slots, attempt);
+            if (!slot) continue;
+            log(
+              `ATTEMPT ${attempt.id}: MATCH ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking`
+            );
+            const result = await book(slot, { headless: opts.headless });
+            if (result.ok && result.confirmation) {
+              completeAttempt(attempt.id, {
+                date: slot.date,
+                day: slot.day,
+                time24: slot.time24,
+                court: slot.court,
+                slotId: slot.slotId,
+                confirmation: result.confirmation,
+              });
+              log(`Attempt ${attempt.id} completed — confirmation ${result.confirmation}`);
+              booked = true;
+              break;
+            }
+            log(`Attempt ${attempt.id} booking failed: ${result.error}`);
+            await sleep(POLL_MS);
           }
         }
+
+        // Priority 2: legacy yaml targets (first match)
+        if (!booked && cfg.enabled && cfg.targets.length > 0) {
+          const matches = matchSlots(slots, cfg);
+          log(`${matches.length} yaml target match(es)`);
+          if (matches.length > 0) {
+            const slot = matches[0];
+            log(`YAML MATCH: ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking`);
+            const result = await book(slot, { headless: opts.headless });
+            if (result.ok) {
+              log(`Booked ${slot.date} ${slot.time24} — confirmation ${result.confirmation}`);
+            } else {
+              log(`Booking failed: ${result.error} — will retry on next matching slot`);
+              await sleep(POLL_MS);
+            }
+          }
+        }
+
         if (inMidnightBurst()) interval = BURST_MS;
       }
     } catch (err: any) {

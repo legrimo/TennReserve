@@ -33,6 +33,35 @@ Auto-books McCarren Park tennis courts (NYC Parks facility 11) inside time range
 
    The file is re-read every poll cycle — edits apply without restarting.
 
+## Dashboard
+
+Local web UI for staging **booking attempts**, managing payment details, and monitoring activity.
+
+```bash
+npm run dev          # API on :3001 + UI on :5173 (proxies /api)
+npm run server       # API only
+npm run ui           # UI only
+```
+
+Open http://localhost:5173
+
+### Booking attempt workflow
+
+1. **New booking attempt** — pick an upcoming staging day (not yet on NYC Parks) or start blank
+2. **Staging screen** — click court/time cells to build a **priority queue** (try #1 first, then #2, …)
+3. **Schedule** — watcher polls and books the first open slot in the queue when the day releases
+4. **Manage** — view, cancel, or delete attempts from the home screen
+
+Scheduled attempts live in `storage/attempts.json`. The calendar works offline (computed date grid); live green/red status requires Playwright (`npm install` runs `playwright install chromium` automatically).
+
+**Calendar zones:**
+- **Current window** (tomorrow → +7 days) — on NYC Parks now; live availability when Playwright works
+- **Upcoming staging** (+8 → +14 days) — select slots before the midnight drop
+
+Toggle **Auto-book** in the sidebar (writes `enabled` in `config/targets.yaml`). Legacy yaml day/time ranges still work via CLI but the dashboard uses booking attempts.
+
+Optional notification channels in `.env`: iMessage uses `IMESSAGE_TO` or falls back to `PHONE`; `NOTIFY_EMAIL` + SMTP for email. Grant **Automation** permission (Terminal/Node → Messages) in System Settings. macOS banner alerts always fire locally.
+
 ## Commands
 
 ```bash
@@ -56,14 +85,14 @@ launchctl load ~/Library/LaunchAgents/com.tennreserve.watcher.plist
 
 The install script writes a local plist from `scripts/com.tennreserve.watcher.plist.example`, substituting your repo path — nothing machine-specific is committed to git.
 
-Logs land in `storage/tennreserve.log` (plus `storage/launchd.*.log`). Successful bookings append to `storage/ledger.json` with the confirmation number and fire a macOS notification.
+Logs land in `storage/tennreserve.log` (plus `storage/launchd.*.log`). Successful bookings append to `storage/ledger.json` with the confirmation number and notify via macOS, email, and iMessage (when configured).
 
 ## Behavior and rules encoded
 
 - Books only slots starting **tomorrow through 7 days out** (site forbids same-day).
 - **One booking per day** — the ledger blocks duplicates.
-- Preference: target order in the yaml, then earlier date/time, then court order.
 - Watcher polls every 60s, bursts to 10s during 00:00–00:10 ET (when the new 7th day releases), and backs off exponentially if AWS WAF challenges appear.
+- **Scheduled booking attempts** take priority over legacy yaml targets; each attempt tries its slot queue in order.
 - Booking failures notify immediately so you can grab the slot manually.
 
 ## Safety notes

@@ -4,7 +4,7 @@ import { launchContext } from "./browser.js";
 import { SCREENSHOT_DIR, loadIdentity, type Identity } from "./config.js";
 import { openReservePage } from "./navigate.js";
 import { appendBooking } from "./ledger.js";
-import { log, notify } from "./notify.js";
+import { log, notifyBooking } from "./notify.js";
 import type { BookingResult, Slot } from "./types.js";
 
 const PAYFLOW_HOST = "payflowlink.paypal.com";
@@ -244,13 +244,21 @@ export async function book(slotOrId: Slot | string, opts: BookOptions = {}): Pro
       bookedAt: new Date().toISOString(),
     });
 
-    notify("TennReserve: booked!", `${label} — confirmation ${confirmation}`);
+    await notifyBooking({
+      success: true,
+      title: "TennReserve: booked!",
+      message: `${label} — confirmation ${confirmation}`,
+    });
     return { ok: true, confirmation, screenshot: shot };
   } catch (err: any) {
     const shot = await screenshot(page, `failed-${slotId}`);
     const message = err?.message ?? String(err);
     if (!opts.dryRun) {
-      notify("TennReserve: booking FAILED", `${label} — ${message}`);
+      await notifyBooking({
+        success: false,
+        title: "TennReserve: booking FAILED",
+        message: `${label} — ${message}`,
+      });
     }
     log(`Booking failed: ${label} — ${message}`);
     log(`Failure screenshot: ${shot}`);
