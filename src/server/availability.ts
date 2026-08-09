@@ -1,5 +1,4 @@
-import { launchContext } from "../browser.js";
-import { fetchAvailabilityHtml } from "../navigate.js";
+import { fetchAvailabilityHttp } from "../fetchAvailability.js";
 import { parseAvailability, parseAvailabilityGrid } from "../parser.js";
 import { buildCalendar, mergeLiveGrid } from "../calendar.js";
 import type { CalendarSnapshot, GridDay, Slot } from "../types.js";
@@ -18,17 +17,11 @@ export interface AvailabilityResponse extends CalendarSnapshot {
 }
 
 async function fetchLive(): Promise<{ gridDays: GridDay[]; slots: Slot[] }> {
-  const ctx = await launchContext({ headless: true });
-  const page = await ctx.newPage();
-  try {
-    const html = await fetchAvailabilityHtml(page);
-    return {
-      gridDays: parseAvailabilityGrid(html),
-      slots: parseAvailability(html),
-    };
-  } finally {
-    await ctx.close();
-  }
+  const html = await fetchAvailabilityHttp();
+  return {
+    gridDays: parseAvailabilityGrid(html),
+    slots: parseAvailability(html),
+  };
 }
 
 export async function getAvailability(force = false): Promise<AvailabilityResponse> {

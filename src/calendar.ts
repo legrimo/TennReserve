@@ -29,7 +29,7 @@ function skeletonDay(date: string, published: boolean): GridDay {
   return { date, day, published, cells };
 }
 
-/** Computed calendar: today, published window (tomorrow..+7), staging (+8..+14). No Playwright. */
+/** Computed calendar: today, published window (tomorrow..+7), staging (+8..+28). No Playwright. */
 export function buildCalendar(): CalendarSnapshot {
   const today = todayIso();
   const dayZones: Record<string, DayZone> = {};
@@ -44,7 +44,7 @@ export function buildCalendar(): CalendarSnapshot {
     days.push(skeletonDay(date, true));
   }
 
-  for (let i = 8; i <= 14; i++) {
+  for (let i = 8; i <= 28; i++) {
     const date = addDays(today, i);
     dayZones[date] = "staging";
     days.push(skeletonDay(date, false));
@@ -74,6 +74,29 @@ export function mergeLiveGrid(base: CalendarSnapshot, liveDays: GridDay[]): Cale
       }),
     };
   });
+  return { ...base, days };
+}
+
+/** Overlay our confirmed bookings onto the calendar grid. */
+export function mergeOwnedBookings(base: CalendarSnapshot, bookings: { date: string; day: string; time24: string; court: number; slotId: string; reservationNumber: string }[]): CalendarSnapshot {
+  if (bookings.length === 0) return base;
+  const byKey = new Map(
+    bookings.map((b) => [`${b.date}-${b.time24}-${b.court}`, b])
+  );
+  const days = base.days.map((day) => ({
+    ...day,
+    cells: day.cells.map((cell) => {
+      const hit = byKey.get(`${cell.date}-${cell.time24}-${cell.court}`);
+      if (!hit) return cell;
+      return {
+        ...cell,
+        status: "booked" as const,
+        slotId: hit.slotId,
+        owned: true,
+        reservationNumber: hit.reservationNumber,
+      };
+    }),
+  }));
   return { ...base, days };
 }
 

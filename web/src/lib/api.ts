@@ -1,5 +1,5 @@
 export type DayZone = "today" | "published" | "staging";
-export type AttemptStatus = "draft" | "scheduled" | "completed" | "cancelled" | "failed";
+export type AttemptStatus = "draft" | "scheduled" | "cancelled" | "succeeded" | "failed" | "missed";
 export type GridCellStatus = "available" | "booked" | "unavailable" | "held";
 
 export interface GridCell {
@@ -9,6 +9,8 @@ export interface GridCell {
   time24: string;
   status: GridCellStatus;
   slotId?: string;
+  owned?: boolean;
+  reservationNumber?: string;
 }
 
 export interface GridDay {
@@ -39,6 +41,30 @@ export interface SlotPick {
   court: number;
 }
 
+export interface BookingPaymentMethod {
+  type: "card";
+  last4: string;
+  exp?: string;
+}
+
+export interface Booking {
+  id: string;
+  reservationNumber: string;
+  scheduledBookingId?: string;
+  date: string;
+  day: string;
+  time24: string;
+  court: number;
+  slotId: string;
+  location: string;
+  reservationType?: string;
+  paymentSuccess: boolean;
+  paymentMethod: BookingPaymentMethod;
+  amount?: string;
+  receiptScreenshot?: string;
+  bookedAt: string;
+}
+
 export interface BookingAttempt {
   id: string;
   name?: string;
@@ -46,10 +72,13 @@ export interface BookingAttempt {
   slots: SlotPick[];
   createdAt: string;
   scheduledAt?: string;
+  missedAt?: string;
+  bookingId?: string;
   bookedSlot?: SlotPick & { slotId: string; confirmation: string };
   error?: string;
 }
 
+/** @deprecated Use Booking */
 export interface BookingRecord {
   date: string;
   day: string;
@@ -105,6 +134,10 @@ export const patchEnabled = (enabled: boolean) =>
     method: "PATCH",
     body: JSON.stringify({ enabled }),
   });
+export const fetchBookings = () => api<Booking[]>("/api/bookings");
+export const fetchBooking = (id: string) => api<Booking>(`/api/bookings/${id}`);
+export const bookingScreenshotUrl = (id: string) => `/api/bookings/${id}/screenshot`;
+/** @deprecated Use fetchBookings */
 export const fetchLedger = () => api<BookingRecord[]>("/api/ledger");
 export const fetchIdentity = () => api<IdentityUi>("/api/identity");
 export const saveIdentity = (data: Partial<IdentityUi> & { cardNumber?: string; cardCvv?: string }) =>

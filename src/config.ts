@@ -11,6 +11,7 @@ export const ENV_PATH = join(ROOT, ".env");
 export const STORAGE_DIR = join(ROOT, "storage");
 export const PROFILE_DIR = join(STORAGE_DIR, "profile");
 export const SCREENSHOT_DIR = join(STORAGE_DIR, "screenshots");
+export const BOOKINGS_PATH = join(STORAGE_DIR, "bookings.json");
 export const LEDGER_PATH = join(STORAGE_DIR, "ledger.json");
 export const LOG_PATH = join(STORAGE_DIR, "tennreserve.log");
 

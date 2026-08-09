@@ -3,7 +3,6 @@ import type { Page, Locator } from "playwright";
 import { launchContext } from "./browser.js";
 import { SCREENSHOT_DIR, loadIdentity, type Identity } from "./config.js";
 import { openReservePage } from "./navigate.js";
-import { appendBooking } from "./ledger.js";
 import { log, notifyBooking } from "./notify.js";
 import type { BookingResult, Slot } from "./types.js";
 
@@ -186,6 +185,8 @@ async function clickPayflowSubmit(page: Page): Promise<void> {
 export interface BookOptions {
   dryRun?: boolean;
   headless?: boolean;
+  /** When false, skip failure notifications (used during in-pass retries). Default true. */
+  notifyOnFailure?: boolean;
 }
 
 /**
@@ -230,30 +231,35 @@ export async function book(slotOrId: Slot | string, opts: BookOptions = {}): Pro
     // Payflow posts back to nycgovparks payment-endpoint/success, which redirects to the thank-you page
     await page.waitForURL((u) => u.pathname.includes("/tennisreservation/thankyou"), { timeout: 60_000 });
     const body = (await page.textContent("body")) ?? "";
-    const confMatch = body.match(/Confirmation Number:\s*([A-Za-z0-9]+)/);
-    const confirmation = confMatch ? confMatch[1] : "UNKNOWN";
+    const confMatch = body.match(/Confirmation Number:\s*([A-Za-z0-9]+)/i);
+    const reservationNumber = confMatch ? confMatch[1] : "UNKNOWN";
+    const amountMatch = body.match(/\$\s*([\d,.]+)/);
+    const amount = amountMatch ? amountMatch[1] : undefined;
     const shot = await screenshot(page, `confirmed-${slot.slotId}`);
 
-    appendBooking({
-      date: slot.date,
-      day: slot.day,
-      time24: slot.time24,
-      court: slot.court,
-      slotId: slot.slotId,
-      confirmation,
-      bookedAt: new Date().toISOString(),
-    });
+    const cardLast4 = id.cardNumber.replace(/\D/g, "").slice(-4) || "????";
+    const checkout = {
+      slot,
+      reservationNumber,
+      receiptScreenshot: shot,
+      amount,
+      paymentMethod: {
+        type: "card" as const,
+        last4: cardLast4,
+        exp: `${id.cardExpMonth}/${id.cardExpYear.length === 4 ? id.cardExpYear.slice(2) : id.cardExpYear}`,
+      },
+    };
 
     await notifyBooking({
       success: true,
       title: "TennReserve: booked!",
-      message: `${label} — confirmation ${confirmation}`,
+      message: `${label} — confirmation ${reservationNumber}`,
     });
-    return { ok: true, confirmation, screenshot: shot };
+    return { ok: true, confirmation: reservationNumber, screenshot: shot, checkout };
   } catch (err: any) {
     const shot = await screenshot(page, `failed-${slotId}`);
     const message = err?.message ?? String(err);
-    if (!opts.dryRun) {
+    if (!opts.dryRun && opts.notifyOnFailure !== false) {
       await notifyBooking({
         success: false,
         title: "TennReserve: booking FAILED",

@@ -2,17 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
+import { AvailabilityProvider, useAvailability } from "@/context/AvailabilityContext";
 import { ActivityPage } from "@/pages/ActivityPage";
 import { AttemptStagingPage } from "@/pages/AttemptStagingPage";
 import { HomePage } from "@/pages/HomePage";
 import { NewAttemptPage } from "@/pages/NewAttemptPage";
 import { SettingsPage } from "@/pages/SettingsPage";
-import { fetchAvailability, fetchStatus, patchEnabled } from "@/lib/api";
+import { fetchStatus, patchEnabled } from "@/lib/api";
 
-function DashboardLayout() {
+function DashboardLayoutInner() {
+  const { refresh, loading } = useAvailability();
   const [enabled, setEnabled] = useState(false);
   const [msUntilMidnight, setMsUntilMidnight] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
 
   const loadStatus = useCallback(async () => {
     const status = await fetchStatus();
@@ -37,16 +38,13 @@ function DashboardLayout() {
   };
 
   const onRefresh = async () => {
-    setRefreshing(true);
     try {
-      await fetchAvailability(true);
+      await refresh();
       await loadStatus();
-      toast.success("Availability refreshed");
       window.dispatchEvent(new Event("tennreserve:refresh"));
+      toast.success("Availability refreshed");
     } catch (err: any) {
       toast.error(err.message);
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -56,8 +54,16 @@ function DashboardLayout() {
       onEnabledChange={onEnabledChange}
       msUntilMidnight={msUntilMidnight}
       onRefresh={onRefresh}
-      refreshing={refreshing}
+      refreshing={loading}
     />
+  );
+}
+
+function DashboardLayout() {
+  return (
+    <AvailabilityProvider>
+      <DashboardLayoutInner />
+    </AvailabilityProvider>
   );
 }
 

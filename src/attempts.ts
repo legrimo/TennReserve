@@ -1,14 +1,38 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { STORAGE_DIR } from "./config.js";
+import { findBookingByReservationNumber } from "./bookings.js";
 import { weekdayOf } from "./parser.js";
 import type { BookingAttempt, Slot, SlotPick } from "./types.js";
 
 export const ATTEMPTS_PATH = `${STORAGE_DIR}/attempts.json`;
 
+let attemptsPersisted = false;
+
+function migrateAttempt(raw: Record<string, unknown>): BookingAttempt {
+  const a = raw as unknown as BookingAttempt & { status?: string; bookedSlot?: BookingAttempt["bookedSlot"] };
+  if (String(a.status) === "completed") {
+    a.status = "succeeded";
+  }
+  if (!a.bookingId && a.bookedSlot?.confirmation) {
+    const booking = findBookingByReservationNumber(a.bookedSlot.confirmation);
+    if (booking) a.bookingId = booking.id;
+  }
+  return a;
+}
+
 export function readAttempts(): BookingAttempt[] {
   if (!existsSync(ATTEMPTS_PATH)) return [];
-  return JSON.parse(readFileSync(ATTEMPTS_PATH, "utf8"));
+  const raw: Record<string, unknown>[] = JSON.parse(readFileSync(ATTEMPTS_PATH, "utf8"));
+  const needsPersist = raw.some(
+    (r) => r.status === "completed" || (r.bookedSlot && !r.bookingId)
+  );
+  const attempts = raw.map(migrateAttempt);
+  if (!attemptsPersisted && needsPersist) {
+    attemptsPersisted = true;
+    writeAttempts(attempts);
+  }
+  return attempts;
 }
 
 function writeAttempts(attempts: BookingAttempt[]): void {
@@ -90,17 +114,24 @@ export function cancelAttempt(id: string): BookingAttempt {
   return current;
 }
 
+export function succeedAttempt(id: string, bookingId: string): BookingAttempt {
+  const attempts = readAttempts();
+  const idx = attempts.findIndex((a) => a.id === id);
+  if (idx === -1) throw new Error(`Attempt ${id} not found`);
+  attempts[idx].status = "succeeded";
+  attempts[idx].bookingId = bookingId;
+  delete attempts[idx].bookedSlot;
+  writeAttempts(attempts);
+  return attempts[idx];
+}
+
+/** @deprecated Use succeedAttempt */
 export function completeAttempt(
   id: string,
   booked: SlotPick & { slotId: string; confirmation: string }
 ): BookingAttempt {
-  const attempts = readAttempts();
-  const idx = attempts.findIndex((a) => a.id === id);
-  if (idx === -1) throw new Error(`Attempt ${id} not found`);
-  attempts[idx].status = "completed";
-  attempts[idx].bookedSlot = booked;
-  writeAttempts(attempts);
-  return attempts[idx];
+  void booked;
+  throw new Error("completeAttempt is deprecated — use onBookingSuccess()");
 }
 
 export function failAttempt(id: string, error: string): BookingAttempt {
@@ -113,11 +144,23 @@ export function failAttempt(id: string, error: string): BookingAttempt {
   return attempts[idx];
 }
 
+/** Auto-close a scheduled attempt when all target slots are gone after the drop. */
+export function missAttempt(id: string, reason: string): BookingAttempt {
+  const attempts = readAttempts();
+  const idx = attempts.findIndex((a) => a.id === id);
+  if (idx === -1) throw new Error(`Attempt ${id} not found`);
+  attempts[idx].status = "missed";
+  attempts[idx].error = reason;
+  attempts[idx].missedAt = new Date().toISOString();
+  writeAttempts(attempts);
+  return attempts[idx];
+}
+
 export function deleteAttempt(id: string): void {
   const attempts = readAttempts();
   const current = attempts.find((a) => a.id === id);
   if (!current) throw new Error(`Attempt ${id} not found`);
-  if (!["draft", "cancelled", "completed", "failed"].includes(current.status)) {
+  if (!["draft", "cancelled", "succeeded", "failed", "missed"].includes(current.status)) {
     throw new Error("Cancel scheduled attempts before deleting");
   }
   writeAttempts(attempts.filter((a) => a.id !== id));

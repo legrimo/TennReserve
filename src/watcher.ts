@@ -1,15 +1,19 @@
 import { loadTargets } from "./config.js";
 import { launchContext } from "./browser.js";
+import { fetchAvailabilityHttp } from "./fetchAvailability.js";
 import { fetchAvailabilityHtml } from "./navigate.js";
-import { parseAvailability } from "./parser.js";
-import { hasBookingOn } from "./ledger.js";
+import { parseAvailability, parseAvailabilityGrid } from "./parser.js";
+import { hasBookingOn } from "./bookings.js";
 import { book } from "./booker.js";
+import { onBookingSuccess } from "./bookingFlow.js";
+import { evaluateAttemptMiss } from "./attemptMiss.js";
 import { log, notify } from "./notify.js";
-import { listScheduledAttempts, matchAttemptSlot, completeAttempt } from "./attempts.js";
-import type { Slot, TargetsConfig } from "./types.js";
+import { listScheduledAttempts, missAttempt } from "./attempts.js";
+import { runScheduledAttempt } from "./scheduledAttemptRunner.js";
+import type { GridDay, Slot, TargetsConfig } from "./types.js";
 
 const POLL_MS = 60_000;
-const BURST_MS = 10_000;
+const BURST_MS = 3_000;
 const DISABLED_MS = 5 * 60_000;
 const WAF_BACKOFF_MAX_MS = 15 * 60_000;
 
@@ -18,9 +22,10 @@ function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function inMidnightBurst(): boolean {
+function inBurstWindow(hasScheduledAttempts: boolean): boolean {
   const d = new Date();
-  return d.getHours() === 0 && d.getMinutes() < 10;
+  if (d.getHours() !== 0) return false;
+  return d.getMinutes() < (hasScheduledAttempts ? 30 : 10);
 }
 
 /** Legacy yaml range matching — kept for CLI / backward compat. */
@@ -55,7 +60,7 @@ function filterBookable(slots: Slot[]): Slot[] {
   return slots.filter((s) => s.date > today && !hasBookingOn(s.date));
 }
 
-async function fetchAvailability(): Promise<string> {
+async function fetchAvailabilityPlaywright(): Promise<string> {
   const ctx = await launchContext({ headless: true });
   const page = await ctx.newPage();
   try {
@@ -65,10 +70,35 @@ async function fetchAvailability(): Promise<string> {
   }
 }
 
+interface AvailabilitySnapshot {
+  html: string;
+  slots: Slot[];
+  gridDays: GridDay[];
+  via: "http" | "browser";
+}
+
+async function fetchAvailabilitySnapshot(): Promise<AvailabilitySnapshot> {
+  const started = Date.now();
+  try {
+    const html = await fetchAvailabilityHttp();
+    const slots = filterBookable(parseAvailability(html));
+    const gridDays = parseAvailabilityGrid(html);
+    log(`Availability fetched via HTTP in ${Date.now() - started}ms (${slots.length} open)`);
+    return { html, slots, gridDays, via: "http" };
+  } catch (err: any) {
+    log(`HTTP availability failed (${err?.message ?? err}) — falling back to browser`);
+    const html = await fetchAvailabilityPlaywright();
+    const slots = filterBookable(parseAvailability(html));
+    const gridDays = parseAvailabilityGrid(html);
+    log(`Availability fetched via browser in ${Date.now() - started}ms (${slots.length} open)`);
+    return { html, slots, gridDays, via: "browser" };
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
-  log("Watcher started — polling McCarren availability/11 via browser");
+  log("Watcher started — polling McCarren availability/11");
   let wafBackoff = 0;
 
   while (true) {
@@ -86,49 +116,53 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
             : "Booking disabled (enabled: false) — standing by"
         );
       } else {
-        const html = await fetchAvailability();
+        const snap = await fetchAvailabilitySnapshot();
         wafBackoff = 0;
-        const slots = filterBookable(parseAvailability(html));
-        log(`${slots.length} open bookable slot(s), ${scheduled.length} scheduled attempt(s)`);
+        log(`${snap.slots.length} open bookable slot(s), ${scheduled.length} scheduled attempt(s)`);
+
+        const fetchOpenSlots = async () => {
+          const fresh = await fetchAvailabilitySnapshot();
+          snap.slots = fresh.slots;
+          snap.gridDays = fresh.gridDays;
+          return fresh.slots;
+        };
 
         let booked = false;
 
-        // Priority 1: scheduled booking attempts (explicit slot picks)
+        // Priority 1: scheduled booking attempts (explicit slot picks, 3-pass retry)
         if (cfg.enabled) {
           for (const attempt of scheduled) {
-            const slot = matchAttemptSlot(slots, attempt);
-            if (!slot) continue;
-            log(
-              `ATTEMPT ${attempt.id}: MATCH ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking`
-            );
-            const result = await book(slot, { headless: opts.headless });
-            if (result.ok && result.confirmation) {
-              completeAttempt(attempt.id, {
-                date: slot.date,
-                day: slot.day,
-                time24: slot.time24,
-                court: slot.court,
-                slotId: slot.slotId,
-                confirmation: result.confirmation,
-              });
-              log(`Attempt ${attempt.id} completed — confirmation ${result.confirmation}`);
+            const outcome = await runScheduledAttempt(attempt, fetchOpenSlots, {
+              headless: opts.headless,
+              initialOpenSlots: snap.slots,
+            });
+            if (outcome === "booked") {
               booked = true;
               break;
             }
-            log(`Attempt ${attempt.id} booking failed: ${result.error}`);
-            await sleep(POLL_MS);
+            if (outcome === "no_slots_yet") {
+              const miss = evaluateAttemptMiss(attempt, snap.gridDays);
+              if (miss) {
+                missAttempt(attempt.id, miss.reason);
+                log(`Attempt ${attempt.id} auto-closed: ${miss.reason}`);
+                notify("TennReserve: scheduled attempt missed", miss.reason);
+              }
+            }
           }
         }
 
         // Priority 2: legacy yaml targets (first match)
         if (!booked && cfg.enabled && cfg.targets.length > 0) {
-          const matches = matchSlots(slots, cfg);
+          const matches = matchSlots(snap.slots, cfg);
           log(`${matches.length} yaml target match(es)`);
           if (matches.length > 0) {
             const slot = matches[0];
             log(`YAML MATCH: ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking`);
             const result = await book(slot, { headless: opts.headless });
-            if (result.ok) {
+            if (result.ok && result.checkout) {
+              const booking = onBookingSuccess(undefined, result.checkout);
+              log(`Booked ${slot.date} ${slot.time24} — ${booking.reservationNumber}`);
+            } else if (result.ok) {
               log(`Booked ${slot.date} ${slot.time24} — confirmation ${result.confirmation}`);
             } else {
               log(`Booking failed: ${result.error} — will retry on next matching slot`);
@@ -137,7 +171,7 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
           }
         }
 
-        if (inMidnightBurst()) interval = BURST_MS;
+        if (inBurstWindow(scheduled.length > 0)) interval = BURST_MS;
       }
     } catch (err: any) {
       if (err?.message === "WAF_CHALLENGE") {

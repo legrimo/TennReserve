@@ -9,6 +9,7 @@ import {
   LOG_PATH,
   type IdentityUpdate,
 } from "../config.js";
+import { readBookings, getBooking } from "../bookings.js";
 import { readLedger } from "../ledger.js";
 import { matchSlots } from "../watcher.js";
 import { sendTestNotification } from "../notify.js";
@@ -132,6 +133,29 @@ app.put("/api/identity", (req, res) => {
 
 app.get("/api/ledger", (_req, res) => {
   res.json(readLedger());
+});
+
+app.get("/api/bookings", (_req, res) => {
+  const bookings = readBookings().sort((a, b) => b.bookedAt.localeCompare(a.bookedAt));
+  res.json(bookings);
+});
+
+app.get("/api/bookings/:id", (req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  res.json(booking);
+});
+
+app.get("/api/bookings/:id/screenshot", (req, res) => {
+  const booking = getBooking(req.params.id);
+  if (!booking?.receiptScreenshot || !existsSync(booking.receiptScreenshot)) {
+    res.status(404).json({ error: "Screenshot not found" });
+    return;
+  }
+  res.sendFile(booking.receiptScreenshot);
 });
 
 app.get("/api/availability", async (req, res) => {

@@ -7,17 +7,18 @@ import { SlotQueue } from "@/components/SlotQueue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { useAvailability } from "@/context/AvailabilityContext";
 import {
   cancelAttempt,
   deleteAttempt,
   fetchAttempt,
-  fetchAvailability,
   scheduleAttempt,
   updateAttempt,
-  type AvailabilitySnapshot,
   type BookingAttempt,
   type SlotPick,
 } from "@/lib/api";
+
+import { attemptLabel } from "@/lib/utils";
 
 function pickKey(p: SlotPick) {
   return `${p.date}-${p.time24}-${p.court}`;
@@ -26,8 +27,8 @@ function pickKey(p: SlotPick) {
 export function AttemptStagingPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { availability, error: availabilityError } = useAvailability();
   const [attempt, setAttempt] = useState<BookingAttempt | null>(null);
-  const [calendar, setCalendar] = useState<AvailabilitySnapshot | null>(null);
   const [name, setName] = useState("");
   const [slots, setSlots] = useState<SlotPick[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -36,22 +37,36 @@ export function AttemptStagingPage() {
 
   const load = useCallback(async () => {
     if (!id) return;
-    const [a, avail] = await Promise.all([fetchAttempt(id), fetchAvailability()]);
+    const a = await fetchAttempt(id);
     setAttempt(a);
-    setCalendar(avail);
     setName(a.name ?? "");
     setSlots(a.slots);
-    setSelectedDate((prev) => {
-      if (prev) return prev;
-      if (a.slots[0]) return a.slots[0].date;
-      const staging = avail.days.find((d) => avail.dayZones[d.date] === "staging");
-      return staging?.date ?? avail.days[1]?.date ?? avail.days[0]?.date ?? null;
-    });
+    if (a.slots[0]) {
+      setSelectedDate(a.slots[0].date);
+    }
   }, [id]);
 
   useEffect(() => {
     load().catch((e) => toast.error(e.message));
   }, [load]);
+
+  useEffect(() => {
+    if (!availability || !attempt) return;
+    if (attempt.status === "draft" && !attempt.slots[0]) {
+      const staging = availability.days.find((d) => availability.dayZones[d.date] === "staging");
+      if (staging) {
+        setSelectedDate(staging.date);
+        return;
+      }
+    }
+    if (!attempt.slots[0]) {
+      setSelectedDate((prev) => {
+        if (prev) return prev;
+        const staging = availability.days.find((d) => availability.dayZones[d.date] === "staging");
+        return staging?.date ?? availability.days[1]?.date ?? availability.days[0]?.date ?? null;
+      });
+    }
+  }, [availability, attempt]);
 
   const persist = async (nextSlots: SlotPick[], nextName?: string) => {
     if (!id || attempt?.status !== "draft") return;
@@ -114,7 +129,7 @@ export function AttemptStagingPage() {
     }
   };
 
-  if (!attempt || !calendar) {
+  if (!attempt || !availability) {
     return <div className="text-muted-foreground">Loading…</div>;
   }
 
@@ -138,9 +153,19 @@ export function AttemptStagingPage() {
             ← Back
           </Link>
           <div className="mt-1 flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">{readOnly ? attempt.name : "Staging"}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {readOnly ? attemptLabel(attempt) : "Staging"}
+            </h1>
             <Badge variant="outline">{attempt.status}</Badge>
           </div>
+          {(attempt.status === "missed" || attempt.status === "failed") && attempt.error && (
+            <p className="mt-2 text-sm text-destructive">{attempt.error}</p>
+          )}
+          {attempt.status === "missed" && attempt.missedAt && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Auto-closed {new Date(attempt.missedAt).toLocaleString()}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {attempt.status === "draft" && (
@@ -161,9 +186,11 @@ export function AttemptStagingPage() {
         </div>
       </div>
 
-      {!calendar.live && (
+      {(availabilityError || !availability.live) && (
         <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-          Live overlay unavailable — calendar skeleton still works for staging picks.
+          {availabilityError
+            ? `Could not load availability — ${availabilityError}. Try Refresh or reload the page.`
+            : "Live overlay unavailable — calendar skeleton still works for staging picks."}
         </div>
       )}
 
@@ -181,12 +208,13 @@ export function AttemptStagingPage() {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <DayGrid
-          calendar={calendar}
+          calendar={availability}
           selectedDate={selectedDate}
           onSelectDate={setSelectedDate}
           queue={slots}
           onToggleSlot={toggleSlot}
-          live={calendar.live}
+          live={availability.live}
+          focusStagingOnly={attempt.status === "draft"}
         />
         <SlotQueue slots={slots} onChange={(next) => { setSlots(next); void persist(next); }} readOnly={readOnly} />
       </div>

@@ -1,63 +1,90 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AttemptSlotPanel } from "@/components/AttemptSlotPanel";
+import { DayGrid, type AttemptSlotMarker } from "@/components/DayGrid";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAvailability } from "@/context/AvailabilityContext";
 import {
   cancelAttempt,
   deleteAttempt,
   fetchAttempts,
-  fetchAvailability,
-  type AvailabilitySnapshot,
+  fetchBookings,
+  type Booking,
   type BookingAttempt,
+  type GridCell,
 } from "@/lib/api";
-import { capitalize, formatTime12 } from "@/lib/utils";
+import { mergeOwnedBookings } from "@/lib/calendarMerge";
+import { attemptLabel, capitalize, formatScheduledExecution, formatTime12 } from "@/lib/utils";
 
 const statusVariant: Record<string, "default" | "secondary" | "success" | "warning" | "destructive" | "outline"> = {
   draft: "secondary",
   scheduled: "warning",
-  completed: "success",
+  succeeded: "success",
   cancelled: "outline",
   failed: "destructive",
+  missed: "destructive",
 };
 
 export function HomePage() {
+  const { availability, loading, error, refreshedAt } = useAvailability();
   const [attempts, setAttempts] = useState<BookingAttempt[]>([]);
-  const [availability, setAvailability] = useState<AvailabilitySnapshot | null>(null);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [clockMs, setClockMs] = useState(() => Date.now());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedMarker, setSelectedMarker] = useState<AttemptSlotMarker | null>(null);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const loadAttempts = useCallback(async () => {
-    const a = await fetchAttempts();
+  const loadData = useCallback(async () => {
+    const [a, b] = await Promise.all([fetchAttempts(), fetchBookings()]);
     setAttempts(a);
+    setBookings(b);
   }, []);
 
-  const load = useCallback(async () => {
-    await loadAttempts();
-    fetchAvailability()
-      .then(setAvailability)
-      .catch(() => {});
-  }, [loadAttempts]);
+  useEffect(() => {
+    loadData().catch((e) => toast.error(e.message));
+  }, [loadData, location.key]);
 
   useEffect(() => {
-    load().catch((e) => toast.error(e.message));
-  }, [load, location.key]);
+    const onAttemptsChanged = () => {
+      loadData().catch((e) => toast.error(e.message));
+    };
+    window.addEventListener("tennreserve:attempts-changed", onAttemptsChanged);
+    return () => window.removeEventListener("tennreserve:attempts-changed", onAttemptsChanged);
+  }, [loadData]);
+
+  useEffect(() => {
+    setClockMs(refreshedAt);
+  }, [refreshedAt]);
 
   useEffect(() => {
     const onRefresh = () => {
-      loadAttempts().catch(() => {});
+      setClockMs(Date.now());
+      loadData().catch((e) => toast.error(e.message));
     };
     window.addEventListener("tennreserve:refresh", onRefresh);
-    window.addEventListener("tennreserve:attempts-changed", onRefresh);
-    return () => {
-      window.removeEventListener("tennreserve:refresh", onRefresh);
-      window.removeEventListener("tennreserve:attempts-changed", onRefresh);
-    };
-  }, [loadAttempts]);
+    return () => window.removeEventListener("tennreserve:refresh", onRefresh);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (attempts.every((a) => a.status !== "scheduled")) return;
+    const id = setInterval(() => setClockMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [attempts]);
+
+  useEffect(() => {
+    if (!availability) return;
+    setSelectedDate((prev) => {
+      if (prev && availability.days.some((d) => d.date === prev)) return prev;
+      const firstPublished = availability.days.find((d) => availability.dayZones[d.date] === "published");
+      return firstPublished?.date ?? availability.days[0]?.date ?? null;
+    });
+  }, [availability]);
 
   const confirmCancel = async () => {
     if (!cancelId) return;
@@ -65,7 +92,7 @@ export function HomePage() {
       await cancelAttempt(cancelId);
       toast.success("Attempt cancelled — nothing will be booked");
       setCancelId(null);
-      await loadAttempts();
+      await loadData();
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -75,7 +102,7 @@ export function HomePage() {
     try {
       await deleteAttempt(id);
       toast.success("Attempt deleted");
-      await loadAttempts();
+      await loadData();
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -84,7 +111,32 @@ export function HomePage() {
   const scheduled = attempts.filter((a) => a.status === "scheduled");
   const other = attempts.filter((a) => a.status !== "scheduled");
 
+  const attemptSlotMarkers = useMemo(
+    () =>
+      attempts
+        .filter((a) => a.status === "scheduled" || a.status === "draft")
+        .flatMap((a) =>
+          a.slots.map((slot, i) => ({
+            attemptId: a.id,
+            status: a.status as "scheduled" | "draft",
+            name: attemptLabel(a),
+            priority: i + 1,
+            totalInAttempt: a.slots.length,
+            slot,
+          }))
+        ),
+    [attempts]
+  );
+
+  const calendarWithBookings = useMemo(
+    () => (availability ? mergeOwnedBookings(availability, bookings) : null),
+    [availability, bookings]
+  );
+
   const cancelTarget = attempts.find((a) => a.id === cancelId);
+
+  const showOfflineBanner =
+    error || (availability && !availability.live);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -93,7 +145,7 @@ export function HomePage() {
         title="Cancel scheduled attempt?"
         description={
           cancelTarget
-            ? `"${cancelTarget.name ?? "This attempt"}" will not be booked. TennReserve will stop watching these slots unless you schedule again.`
+            ? `"${attemptLabel(cancelTarget)}" will not be booked. TennReserve will stop watching these slots unless you schedule again.`
             : "This attempt will not be booked."
         }
         confirmLabel="Yes, cancel"
@@ -103,25 +155,77 @@ export function HomePage() {
         onCancel={() => setCancelId(null)}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Booking attempts</h1>
-          <p className="text-muted-foreground">
-            Stage slot priorities for upcoming days, then schedule for automatic booking.
-          </p>
-        </div>
-        <Button onClick={() => navigate("/attempts/new")}>
-          <Plus className="h-4 w-4" />
-          New booking attempt
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Booking attempts</h1>
+        <p className="text-muted-foreground">
+          Stage slot priorities for upcoming days, then schedule for automatic booking.
+        </p>
       </div>
 
-      {availability && !availability.live && (
+      {showOfflineBanner && (
         <div className="rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-          Live availability unavailable — {availability.error?.slice(0, 120) ?? "Playwright not ready"}.
-          Staging still works; run <code className="font-mono text-xs">npx playwright install chromium</code> for live
-          status.
+          {error
+            ? `Could not load availability — ${error}. Try Refresh or reload the page.`
+            : `Live availability unavailable — ${availability?.error?.slice(0, 120) ?? "fetch failed"}. Staging still works; check your network or try again shortly.`}
         </div>
+      )}
+
+      {calendarWithBookings && (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle>Court availability</CardTitle>
+              {loading ? (
+                <Badge variant="secondary">Loading…</Badge>
+              ) : availability?.live ? (
+                <Badge variant="success">Live</Badge>
+              ) : (
+                <Badge variant="secondary">Offline</Badge>
+              )}
+            </div>
+            <CardDescription>
+              Four-week view — live NYC Parks slots for the next 7 days, your booking attempts on staging days through +28.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <DayGrid
+              calendar={calendarWithBookings}
+              selectedDate={selectedDate}
+              onSelectDate={(date) => {
+                setSelectedDate(date);
+                setSelectedMarker(null);
+              }}
+              queue={[]}
+              onToggleSlot={() => {}}
+              live={availability?.live}
+              readOnly
+              attemptSlotMarkers={attemptSlotMarkers}
+              onNewAttempt={() => navigate("/attempts/new")}
+              onCellSelect={(marker, cell: GridCell) => {
+                if (marker) {
+                  setSelectedMarker(marker);
+                  setSelectedDate(cell.date);
+                } else {
+                  setSelectedMarker(null);
+                }
+              }}
+            />
+            <AttemptSlotPanel
+              marker={selectedMarker}
+              onClose={() => setSelectedMarker(null)}
+              onCancel={setCancelId}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {!availability && loading && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Court availability</CardTitle>
+            <CardDescription>Loading schedule from NYC Parks…</CardDescription>
+          </CardHeader>
+        </Card>
       )}
 
       <Card>
@@ -134,7 +238,7 @@ export function HomePage() {
             <p className="text-sm text-muted-foreground">No scheduled attempts.</p>
           ) : (
             scheduled.map((a) => (
-              <AttemptCard key={a.id} attempt={a} onCancel={setCancelId} onDelete={onDelete} />
+              <AttemptCard key={a.id} attempt={a} now={clockMs} onCancel={setCancelId} onDelete={onDelete} />
             ))
           )}
         </CardContent>
@@ -147,7 +251,7 @@ export function HomePage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {other.map((a) => (
-              <AttemptCard key={a.id} attempt={a} onCancel={setCancelId} onDelete={onDelete} />
+              <AttemptCard key={a.id} attempt={a} now={clockMs} onCancel={setCancelId} onDelete={onDelete} />
             ))}
           </CardContent>
         </Card>
@@ -158,10 +262,12 @@ export function HomePage() {
 
 function AttemptCard({
   attempt,
+  now,
   onCancel,
   onDelete,
 }: {
   attempt: BookingAttempt;
+  now: number;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -171,7 +277,7 @@ function AttemptCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-medium">{attempt.name ?? attempt.id.slice(0, 8)}</span>
+            <span className="font-medium">{attemptLabel(attempt)}</span>
             <Badge variant={statusVariant[attempt.status] ?? "outline"}>{attempt.status}</Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -183,14 +289,33 @@ function AttemptCard({
               </>
             )}
           </p>
-          {attempt.bookedSlot && (
+          {attempt.status === "scheduled" && top && (
+            <p className="mt-1 text-sm text-warning">
+              Executes {formatScheduledExecution(top.date, new Date(now))}
+            </p>
+          )}
+          {(attempt.status === "missed" || attempt.status === "failed") && attempt.error && (
+            <p className="mt-1 text-sm text-destructive">{attempt.error}</p>
+          )}
+          {attempt.status === "missed" && attempt.missedAt && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Auto-closed {new Date(attempt.missedAt).toLocaleString()}
+            </p>
+          )}
+          {attempt.bookingId ? (
+            <p className="mt-1 font-mono text-xs text-success">
+              <Link to="/activity" className="hover:underline">
+                View booking in Activity
+              </Link>
+            </p>
+          ) : attempt.bookedSlot ? (
             <p className="mt-1 font-mono text-xs text-success">
               Booked #{attempt.bookedSlot.slotId} — {attempt.bookedSlot.confirmation}
             </p>
-          )}
+          ) : null}
         </div>
         <div className="flex gap-2">
-          {(attempt.status === "draft" || attempt.status === "scheduled") && (
+          {(attempt.status === "draft" || attempt.status === "scheduled" || attempt.status === "succeeded") && (
             <Link
               to={`/attempts/${attempt.id}`}
               className="inline-flex h-8 items-center justify-center rounded-md border border-border px-3 text-xs font-medium hover:bg-muted"
@@ -203,7 +328,7 @@ function AttemptCard({
               Cancel
             </Button>
           )}
-          {["draft", "cancelled", "completed", "failed"].includes(attempt.status) && (
+          {["draft", "cancelled", "succeeded", "failed", "missed"].includes(attempt.status) && (
             <Button variant="ghost" size="sm" onClick={() => onDelete(attempt.id)}>
               Delete
             </Button>

@@ -1,19 +1,24 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { LEDGER_PATH } from "./config.js";
+import { readBookings } from "./bookings.js";
 import type { BookingRecord } from "./types.js";
 
+/** @deprecated Use readBookings() — ledger rows are migrated into bookings.json */
 export function readLedger(): BookingRecord[] {
-  if (!existsSync(LEDGER_PATH)) return [];
-  return JSON.parse(readFileSync(LEDGER_PATH, "utf8"));
+  return readBookings().map((b) => ({
+    date: b.date,
+    day: b.day,
+    time24: b.time24,
+    court: b.court,
+    slotId: b.slotId,
+    confirmation: b.reservationNumber,
+    amount: b.amount,
+    bookedAt: b.bookedAt,
+  }));
 }
 
+/** @deprecated Bookings are created via bookingFlow.onBookingSuccess */
 export function appendBooking(record: BookingRecord): void {
-  const ledger = readLedger();
-  ledger.push(record);
-  writeFileSync(LEDGER_PATH, JSON.stringify(ledger, null, 2) + "\n");
+  void record;
+  throw new Error("appendBooking is deprecated — use onBookingSuccess()");
 }
 
-/** Site rule: max one active reservation per day. */
-export function hasBookingOn(date: string): boolean {
-  return readLedger().some((r) => r.date === date);
-}
+export { hasBookingOn } from "./bookings.js";
