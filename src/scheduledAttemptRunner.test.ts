@@ -4,7 +4,7 @@ import {
   SCHEDULED_PASSES,
   type BookFn,
 } from "./scheduledAttemptRunner.js";
-import type { BookingAttempt, BookingResult, Slot } from "./types.js";
+import type { BookingAttempt, GridDay, Slot } from "./types.js";
 
 let failures = 0;
 function assert(cond: boolean, msg: string) {
@@ -133,6 +133,80 @@ await runTest(
   "booked"
 );
 assert(bookCalls === 2, `pass 2 fallback: 2 book calls (got ${bookCalls})`);
+
+// Unpublished target day → skip passes 2–3 (single fetch via initialOpenSlots)
+fetchCount = 0;
+{
+  const unpublishedGrid: GridDay[] = [];
+  const result = await runScheduledAttemptWithBook(
+    attempt,
+    async () => {
+      fetchCount++;
+      return [];
+    },
+    async () => ({ ok: false, error: "should not book" }),
+    {
+      onBooked: () => {},
+      onFailed: () => {},
+      sleepFn: noopSleep,
+      initialOpenSlots: [],
+      initialGridDays: unpublishedGrid,
+    }
+  );
+  assert(result === "no_slots_yet", `unpublished day → no_slots_yet (got ${result})`);
+  assert(fetchCount === 0, `unpublished day: no extra fetches (got ${fetchCount})`);
+}
+
+// Published day but picks closed → still run further passes (refetch)
+fetchCount = 0;
+bookCalls = 0;
+{
+  const publishedGrid: GridDay[] = [
+    {
+      date: "2026-07-13",
+      day: "monday",
+      published: true,
+      cells: [
+        {
+          date: "2026-07-13",
+          day: "monday",
+          court: 5,
+          time24: "18:00",
+          status: "booked",
+        },
+      ],
+    },
+  ];
+  const result = await runScheduledAttemptWithBook(
+    attempt,
+    async () => {
+      fetchCount++;
+      return fetchCount === 1 ? [] : [slot6];
+    },
+    async (slot) => {
+      bookCalls++;
+      return {
+        ok: true,
+        confirmation: "PUB1",
+        checkout: {
+          slot,
+          reservationNumber: "PUB1",
+          paymentMethod: { type: "card", last4: "0000" },
+        },
+      };
+    },
+    {
+      onBooked: () => {},
+      onFailed: () => {},
+      sleepFn: noopSleep,
+      initialOpenSlots: [],
+      initialGridDays: publishedGrid,
+    }
+  );
+  assert(result === "booked", `published empty then open → booked (got ${result})`);
+  assert(fetchCount >= 1, `published day: refetched (got ${fetchCount})`);
+  assert(bookCalls === 1, `published day: 1 book call (got ${bookCalls})`);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} test(s) failed`);

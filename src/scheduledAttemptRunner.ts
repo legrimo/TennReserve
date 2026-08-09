@@ -2,7 +2,7 @@ import { failAttempt } from "./attempts.js";
 import { book } from "./booker.js";
 import { onBookingSuccess } from "./bookingFlow.js";
 import { log, notify } from "./notify.js";
-import type { BookingAttempt, BookingResult, CheckoutResult, Slot, SlotPick } from "./types.js";
+import type { BookingAttempt, BookingResult, CheckoutResult, GridDay, Slot, SlotPick } from "./types.js";
 
 export const SCHEDULED_PASSES = 3;
 export const SLOT_RETRY_DELAY_MS = 2_000;
@@ -20,6 +20,14 @@ function findOpenSlot(openSlots: Slot[], pick: SlotPick): Slot | undefined {
   );
 }
 
+/** True when at least one pick's date is on the live published grid. */
+export function anyPickDatePublished(attempt: BookingAttempt, gridDays: GridDay[]): boolean {
+  return attempt.slots.some((pick) => {
+    const day = gridDays.find((d) => d.date === pick.date);
+    return day?.published === true;
+  });
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function runScheduledAttemptWithBook(
   attempt: BookingAttempt,
@@ -32,6 +40,8 @@ export async function runScheduledAttemptWithBook(
     sleepFn?: (ms: number) => Promise<void>;
     /** Reuse a fetch from the outer poll cycle for pass 1. */
     initialOpenSlots?: Slot[];
+    /** Grid from the outer poll — used to skip passes 2–3 when days aren't published yet. */
+    initialGridDays?: GridDay[];
   } = {}
 ): Promise<ScheduledAttemptResult> {
   let anyBookAttempted = false;
@@ -65,6 +75,14 @@ export async function runScheduledAttemptWithBook(
       log(`ATTEMPT ${attempt.id}: court ${slot.court} failed: ${lastError}`);
       await wait(SLOT_RETRY_DELAY_MS);
     }
+
+    // No open matches on pass 1 and target day(s) not on Parks yet → don't refetch.
+    if (pass === 1 && !anyBookAttempted && opts.initialGridDays) {
+      if (!anyPickDatePublished(attempt, opts.initialGridDays)) {
+        log(`ATTEMPT ${attempt.id}: target day(s) not published yet — skipping further passes`);
+        return "no_slots_yet";
+      }
+    }
   }
 
   if (!anyBookAttempted) {
@@ -86,7 +104,7 @@ export async function runScheduledAttemptWithBook(
 export async function runScheduledAttempt(
   attempt: BookingAttempt,
   fetchOpenSlots: () => Promise<Slot[]>,
-  opts: { headless?: boolean; initialOpenSlots?: Slot[] } = {}
+  opts: { headless?: boolean; initialOpenSlots?: Slot[]; initialGridDays?: GridDay[] } = {}
 ): Promise<ScheduledAttemptResult> {
   return runScheduledAttemptWithBook(attempt, fetchOpenSlots, book, opts);
 }

@@ -169,7 +169,7 @@ rsync -az tennreserve@YOUR_DROPLET_IP:/opt/TennReserve/storage/ledger.json stora
 
 - Books only slots starting **tomorrow through 7 days out** (site forbids same-day).
 - **One booking per day** — the ledger blocks duplicates.
-- Watcher polls every 60s, bursts to **3s** during 00:00–00:10 ET (00:00–00:30 when a scheduled attempt is active). Availability is fetched via **HTTP first** (~1s); Playwright is only a fallback if WAF blocks.
+- Watcher polls every 60s, bursts to **3s** during 00:00–00:10 ET (00:00–00:30 when a scheduled attempt is active). When the earliest scheduled drop is **>12h away**, it polls every **15m over HTTP only** (no Chromium). Availability is HTTP-first; Playwright fallback uses a **shared browser context**, with a **~10m cooldown** after WAF/browser use so 1 GB hosts are not thrashing Chromium every minute. Scheduled attempts **skip passes 2–3** when the target day is not on the Parks grid yet.
 - **Scheduled booking attempts** take priority over legacy yaml targets. Each attempt walks its slot queue in priority order, up to **3 full passes** per poll cycle (re-fetching between passes 2–3; pass 1 reuses the cycle fetch). If slots are not in the HTML yet, polling continues. If all target slots show **booked/unavailable** on the live grid, the attempt is auto-closed as **missed** with a reason you can inspect in the dashboard. Checkout failures after booking was attempted mark the attempt **failed**.
 - Booking failures notify immediately so you can grab the slot manually.
 

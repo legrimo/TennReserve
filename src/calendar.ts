@@ -107,4 +107,22 @@ export function msUntilMidnight(): number {
   return midnight.getTime() - now.getTime();
 }
 
+/** Local midnight when `slotDate` first enters the NYC Parks 7-day published window. */
+export function scheduledExecutionAt(slotDate: string): Date {
+  const dropIso = addDays(slotDate, -7);
+  const [y, mo, d] = dropIso.split("-").map(Number);
+  return new Date(y, mo - 1, d, 0, 0, 0, 0);
+}
+
+/** Earliest drop time across slot dates, or null if none. */
+export function earliestScheduledExecution(slotDates: string[]): Date | null {
+  if (slotDates.length === 0) return null;
+  let earliest: Date | null = null;
+  for (const date of slotDates) {
+    const at = scheduledExecutionAt(date);
+    if (!earliest || at.getTime() < earliest.getTime()) earliest = at;
+  }
+  return earliest;
+}
+
 export type { DayZone };
