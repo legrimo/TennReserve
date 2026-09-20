@@ -115,9 +115,9 @@ export function DayGrid({
   }, [activeDay]);
 
   const courts = useMemo(() => {
-    if (!activeDay?.cells.length) return [5, 6];
+    if (!activeDay?.cells.length) return calendar.courts?.length ? calendar.courts : [];
     return [...new Set(activeDay.cells.map((c) => c.court))].sort((a, b) => a - b);
-  }, [activeDay]);
+  }, [activeDay, calendar.courts]);
 
   const handleCell = (cell: GridCell) => {
     if (readOnly) return;

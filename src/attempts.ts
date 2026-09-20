@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { STORAGE_DIR } from "./config.js";
+import { DEFAULT_FACILITY_ID, isCourtInFacility, resolveFacilityId } from "./facilities.js";
 import { findBookingByReservationNumber } from "./bookings.js";
 import { weekdayOf } from "./parser.js";
 import type { BookingAttempt, Slot, SlotPick } from "./types.js";
@@ -18,6 +19,9 @@ function migrateAttempt(raw: Record<string, unknown>): BookingAttempt {
     const booking = findBookingByReservationNumber(a.bookedSlot.confirmation);
     if (booking) a.bookingId = booking.id;
   }
+  if (a.facilityId == null) {
+    a.facilityId = DEFAULT_FACILITY_ID;
+  }
   return a;
 }
 
@@ -25,7 +29,7 @@ export function readAttempts(): BookingAttempt[] {
   if (!existsSync(ATTEMPTS_PATH)) return [];
   const raw: Record<string, unknown>[] = JSON.parse(readFileSync(ATTEMPTS_PATH, "utf8"));
   const needsPersist = raw.some(
-    (r) => r.status === "completed" || (r.bookedSlot && !r.bookingId)
+    (r) => r.status === "completed" || (r.bookedSlot && !r.bookingId) || r.facilityId == null
   );
   const attempts = raw.map(migrateAttempt);
   if (!attemptsPersisted && needsPersist) {
@@ -47,12 +51,28 @@ export function listScheduledAttempts(): BookingAttempt[] {
   return readAttempts().filter((a) => a.status === "scheduled");
 }
 
-export function createAttempt(input: { name?: string; targetDate?: string } = {}): BookingAttempt {
+export function validateSlotPicks(slots: SlotPick[], facilityId: number): SlotPick[] {
+  for (const s of slots) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date)) throw new Error(`Invalid date ${s.date}`);
+    if (!/^\d{2}:\d{2}$/.test(s.time24)) throw new Error(`Invalid time ${s.time24}`);
+    if (!isCourtInFacility(facilityId, s.court)) {
+      throw new Error(`Invalid court ${s.court} for facility ${facilityId}`);
+    }
+    s.day = s.day || weekdayOf(s.date);
+  }
+  return slots;
+}
+
+export function createAttempt(
+  input: { name?: string; targetDate?: string; facilityId?: number } = {}
+): BookingAttempt {
+  const facilityId = resolveFacilityId(input.facilityId);
   const attempts = readAttempts();
   const attempt: BookingAttempt = {
     id: randomUUID(),
     name: input.name ?? (input.targetDate ? `Attempt ${input.targetDate}` : "New booking attempt"),
     status: "draft",
+    facilityId,
     slots: [],
     createdAt: new Date().toISOString(),
   };
@@ -63,7 +83,7 @@ export function createAttempt(input: { name?: string; targetDate?: string } = {}
 
 export function updateAttempt(
   id: string,
-  patch: { name?: string; slots?: SlotPick[] }
+  patch: { name?: string; slots?: SlotPick[]; facilityId?: number }
 ): BookingAttempt {
   const attempts = readAttempts();
   const idx = attempts.findIndex((a) => a.id === id);
@@ -72,14 +92,12 @@ export function updateAttempt(
   if (current.status !== "draft") throw new Error("Only draft attempts can be edited");
 
   if (patch.name !== undefined) current.name = patch.name;
+  if (patch.facilityId !== undefined) {
+    current.facilityId = resolveFacilityId(patch.facilityId);
+    current.slots = current.slots.filter((s) => isCourtInFacility(current.facilityId, s.court));
+  }
   if (patch.slots !== undefined) {
-    for (const s of patch.slots) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date)) throw new Error(`Invalid date ${s.date}`);
-      if (!/^\d{2}:\d{2}$/.test(s.time24)) throw new Error(`Invalid time ${s.time24}`);
-      if (![5, 6].includes(s.court)) throw new Error(`Invalid court ${s.court}`);
-      s.day = s.day || weekdayOf(s.date);
-    }
-    current.slots = patch.slots;
+    current.slots = validateSlotPicks(patch.slots, current.facilityId);
   }
 
   attempts[idx] = current;
@@ -166,7 +184,9 @@ export function deleteAttempt(id: string): void {
   writeAttempts(attempts.filter((a) => a.id !== id));
 }
 
-/** Match open slots against an attempt's priority list. */
+export function attemptFacilityId(attempt: BookingAttempt): number {
+  return attempt.facilityId ?? DEFAULT_FACILITY_ID;
+}
 export function matchAttemptSlot(openSlots: Slot[], attempt: BookingAttempt): Slot | null {
   for (const pick of attempt.slots) {
     const hit = openSlots.find(

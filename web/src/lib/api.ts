@@ -25,12 +25,15 @@ export interface CalendarSnapshot {
   msUntilMidnight: number;
   days: GridDay[];
   dayZones: Record<string, DayZone>;
+  facilityId?: number;
+  courts?: number[];
 }
 
 export interface AvailabilitySnapshot extends CalendarSnapshot {
   fetchedAt: string;
   live: boolean;
   error?: string;
+  facilityName?: string;
   slots: { date: string; day: string; time24: string; court: number; slotId: string }[];
 }
 
@@ -57,6 +60,7 @@ export interface Booking {
   court: number;
   slotId: string;
   location: string;
+  facilityId?: number;
   reservationType?: string;
   paymentSuccess: boolean;
   paymentMethod: BookingPaymentMethod;
@@ -69,6 +73,7 @@ export interface BookingAttempt {
   id: string;
   name?: string;
   status: AttemptStatus;
+  facilityId: number;
   slots: SlotPick[];
   createdAt: string;
   scheduledAt?: string;
@@ -109,6 +114,19 @@ export interface IdentityUi {
   player2Permit?: string;
 }
 
+export interface Facility {
+  id: number;
+  name: string;
+  courts: number[];
+  hours: string[];
+}
+
+export interface FacilitiesResponse {
+  defaultFacilityId: number;
+  uiDefaultFacilityId: number;
+  facilities: Facility[];
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -122,9 +140,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export const fetchCalendar = () => api<CalendarSnapshot>("/api/calendar");
-export const fetchAvailability = (refresh = false) =>
-  api<AvailabilitySnapshot>(`/api/availability${refresh ? "?refresh=1" : ""}`);
+export const fetchFacilities = () => api<FacilitiesResponse>("/api/facilities");
+export const fetchCalendar = (facilityId?: number) =>
+  api<CalendarSnapshot>(`/api/calendar${facilityId != null ? `?facilityId=${facilityId}` : ""}`);
+export const fetchAvailability = (refresh = false, facilityId?: number) => {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  if (facilityId != null) params.set("facilityId", String(facilityId));
+  const q = params.toString();
+  return api<AvailabilitySnapshot>(`/api/availability${q ? `?${q}` : ""}`);
+};
 export const fetchStatus = () =>
   api<{ enabled: boolean; msUntilMidnight: number; scheduledAttemptCount: number; recentLog: string[] }>(
     "/api/status"
@@ -147,9 +172,9 @@ export const testNotifications = () =>
 
 export const fetchAttempts = () => api<BookingAttempt[]>("/api/attempts");
 export const fetchAttempt = (id: string) => api<BookingAttempt>(`/api/attempts/${id}`);
-export const createAttempt = (body?: { name?: string; targetDate?: string }) =>
+export const createAttempt = (body?: { name?: string; targetDate?: string; facilityId?: number }) =>
   api<BookingAttempt>("/api/attempts", { method: "POST", body: JSON.stringify(body ?? {}) });
-export const updateAttempt = (id: string, body: { name?: string; slots?: SlotPick[] }) =>
+export const updateAttempt = (id: string, body: { name?: string; slots?: SlotPick[]; facilityId?: number }) =>
   api<BookingAttempt>(`/api/attempts/${id}`, { method: "PUT", body: JSON.stringify(body) });
 export const scheduleAttempt = (id: string) =>
   api<BookingAttempt>(`/api/attempts/${id}/schedule`, { method: "POST" });

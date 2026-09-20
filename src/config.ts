@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import dotenv from "dotenv";
 import type { BookingMode, TargetsConfig } from "./types.js";
+import { DEFAULT_FACILITY_ID, availabilityUrl } from "./facilities.js";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const TARGETS_PATH = join(ROOT, "config", "targets.yaml");
@@ -15,8 +16,10 @@ export const BOOKINGS_PATH = join(STORAGE_DIR, "bookings.json");
 export const LEDGER_PATH = join(STORAGE_DIR, "ledger.json");
 export const LOG_PATH = join(STORAGE_DIR, "tennreserve.log");
 
-export const FACILITY_ID = 11; // McCarren Park
-export const AVAILABILITY_URL = `https://www.nycgovparks.org/tennisreservation/availability/${FACILITY_ID}`;
+/** @deprecated Use DEFAULT_FACILITY_ID from facilities.ts */
+export const FACILITY_ID = DEFAULT_FACILITY_ID;
+/** @deprecated Use availabilityUrl(facilityId) */
+export const AVAILABILITY_URL = availabilityUrl(DEFAULT_FACILITY_ID);
 
 dotenv.config({ path: ENV_PATH, quiet: true });
 

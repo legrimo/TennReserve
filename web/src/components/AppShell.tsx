@@ -12,6 +12,7 @@ interface AppShellProps {
   msUntilMidnight: number;
   onRefresh: () => void;
   refreshing?: boolean;
+  facilityLabel?: string;
 }
 
 const nav = [
@@ -26,13 +27,16 @@ export function AppShell({
   msUntilMidnight,
   onRefresh,
   refreshing,
+  facilityLabel,
 }: AppShellProps) {
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-card md:flex">
         <div className="p-4">
           <div className="text-lg font-semibold tracking-tight">TennReserve</div>
-          <div className="text-xs text-muted-foreground">McCarren Park · Facility 11</div>
+          <div className="text-xs text-muted-foreground">
+            {facilityLabel ?? "NYC Parks tennis"}
+          </div>
         </div>
         <Separator />
         <nav className="flex flex-1 flex-col gap-1 p-2">

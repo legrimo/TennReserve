@@ -37,6 +37,7 @@ const slot6: Slot = {
 const attempt: BookingAttempt = {
   id: "test-attempt",
   status: "scheduled",
+  facilityId: 11,
   slots: [
     { date: "2026-07-13", day: "monday", time24: "18:00", court: 5 },
     { date: "2026-07-13", day: "monday", time24: "18:00", court: 6 },

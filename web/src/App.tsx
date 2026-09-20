@@ -11,7 +11,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { fetchStatus, patchEnabled } from "@/lib/api";
 
 function DashboardLayoutInner() {
-  const { refresh, loading } = useAvailability();
+  const { refresh, loading, selectedFacility } = useAvailability();
   const [enabled, setEnabled] = useState(false);
   const [msUntilMidnight, setMsUntilMidnight] = useState(0);
 
@@ -55,6 +55,9 @@ function DashboardLayoutInner() {
       msUntilMidnight={msUntilMidnight}
       onRefresh={onRefresh}
       refreshing={loading}
+      facilityLabel={
+        selectedFacility ? `${selectedFacility.name} · Facility ${selectedFacility.id}` : undefined
+      }
     />
   );
 }

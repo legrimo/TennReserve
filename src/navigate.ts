@@ -1,11 +1,15 @@
 import type { Page } from "playwright";
-import { AVAILABILITY_URL } from "./config.js";
+import { DEFAULT_FACILITY_ID, availabilityUrl } from "./facilities.js";
 import { log } from "./notify.js";
 import { parseAvailability } from "./parser.js";
 import type { Slot } from "./types.js";
 
 /** NYC Parks allows one in-progress hold per session — cancel others before a fresh reservation. */
-export async function cancelOtherHolds(page: Page, keepSlotId: string): Promise<void> {
+export async function cancelOtherHolds(
+  page: Page,
+  keepSlotId: string,
+  facilityId: number = DEFAULT_FACILITY_ID
+): Promise<void> {
   const held = page.locator('a.assign_someone', { hasText: "Continue Booking" });
   const count = await held.count();
   for (let i = 0; i < count; i++) {
@@ -30,9 +34,9 @@ export async function cancelOtherHolds(page: Page, keepSlotId: string): Promise<
       await page.waitForLoadState("domcontentloaded");
     }
 
-    await page.goto(AVAILABILITY_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(availabilityUrl(facilityId), { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForSelector("div.tab-pane", { timeout: 15_000 });
-    return cancelOtherHolds(page, keepSlotId);
+    return cancelOtherHolds(page, keepSlotId, facilityId);
   }
 }
 
@@ -40,8 +44,12 @@ export async function cancelOtherHolds(page: Page, keepSlotId: string): Promise<
  * Open a slot by clicking through the availability grid (required — direct /reserve/{id} URLs fail).
  * Returns parsed slot metadata for the chosen id.
  */
-export async function openReservePage(page: Page, slotId: string): Promise<Slot> {
-  await page.goto(AVAILABILITY_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+export async function openReservePage(
+  page: Page,
+  slotId: string,
+  facilityId: number = DEFAULT_FACILITY_ID
+): Promise<Slot> {
+  await page.goto(availabilityUrl(facilityId), { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForSelector("div.tab-pane", { timeout: 15_000 });
 
   const link = page.locator(`a.assign_someone[href="/tennisreservation/reserve/${slotId}"]`);
@@ -57,7 +65,7 @@ export async function openReservePage(page: Page, slotId: string): Promise<Slot>
   } else if (label !== "Reserve this time") {
     throw new Error(`Unexpected slot link label "${label}" for #${slotId}`);
   } else {
-    await cancelOtherHolds(page, slotId);
+    await cancelOtherHolds(page, slotId, facilityId);
     // Re-locate link after returning from cancel flow
     if ((await link.count()) === 0) {
       throw new Error(
@@ -73,7 +81,7 @@ export async function openReservePage(page: Page, slotId: string): Promise<Slot>
     await page.waitForTimeout(300);
   }
 
-  const slots = parseAvailability(await page.content());
+  const slots = parseAvailability(await page.content(), facilityId);
   const slot = slots.find((s) => s.slotId === slotId);
   if (!slot) {
     // Parser only lists "Reserve this time"; synthesize minimal metadata for Continue Booking
@@ -94,6 +102,7 @@ export async function openReservePage(page: Page, slotId: string): Promise<Slot>
       court: parseInt(meta.court, 10),
       slotId,
       url: `https://www.nycgovparks.org/tennisreservation/reserve/${slotId}`,
+      facilityId,
     };
     await link.first().scrollIntoViewIfNeeded();
     await link.first().click();
@@ -124,8 +133,11 @@ function parseTimeLabel(label: string): string {
 }
 
 /** Fetch availability HTML using a real browser session (bypasses AWS WAF). */
-export async function fetchAvailabilityHtml(page: Page): Promise<string> {
-  await page.goto(AVAILABILITY_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+export async function fetchAvailabilityHtml(
+  page: Page,
+  facilityId: number = DEFAULT_FACILITY_ID
+): Promise<string> {
+  await page.goto(availabilityUrl(facilityId), { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForSelector("div.tab-pane", { timeout: 15_000 }).catch(() => {});
   return page.content();
 }

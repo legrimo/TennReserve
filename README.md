@@ -1,6 +1,8 @@
 # TennReserve
 
-Auto-books McCarren Park tennis courts (NYC Parks facility 11) inside time ranges you tune weekly. Watches [the availability page](https://www.nycgovparks.org/tennisreservation/availability/11), grabs the first slot matching your targets, and completes checkout through Payflow with a pre-configured (capped, virtual) card.
+Auto-books NYC Parks tennis courts (McCarren Park facility 11, Mill Pond facility 4) inside time ranges you tune weekly. Watches the [availability page](https://www.nycgovparks.org/tennisreservation/availability/11) for the selected facility, grabs the first slot matching your targets, and completes checkout through Payflow with a pre-configured (capped, virtual) card.
+
+The dashboard **court location** picker defaults to **Mill Pond** (outdoor McCarren season is closed). Stored attempts and bookings without a `facilityId` still default to McCarren so existing configs keep working.
 
 ## Setup
 

@@ -2,6 +2,7 @@ import type { BrowserContext } from "playwright";
 import { loadTargets } from "./config.js";
 import { launchContext } from "./browser.js";
 import { earliestScheduledExecution } from "./calendar.js";
+import { DEFAULT_FACILITY_ID, getFacility, listFacilities } from "./facilities.js";
 import { fetchAvailabilityHttp } from "./fetchAvailability.js";
 import { fetchAvailabilityHtml } from "./navigate.js";
 import { parseAvailability, parseAvailabilityGrid } from "./parser.js";
@@ -10,7 +11,7 @@ import { book } from "./booker.js";
 import { onBookingSuccess } from "./bookingFlow.js";
 import { evaluateAttemptMiss } from "./attemptMiss.js";
 import { log, notify } from "./notify.js";
-import { listScheduledAttempts, missAttempt } from "./attempts.js";
+import { attemptFacilityId, listScheduledAttempts, missAttempt } from "./attempts.js";
 import { runScheduledAttempt } from "./scheduledAttemptRunner.js";
 import type { BookingAttempt, GridDay, Slot, TargetsConfig } from "./types.js";
 
@@ -97,11 +98,11 @@ async function closeSharedAvailabilityContext(): Promise<void> {
   log("Closed shared Playwright context");
 }
 
-async function fetchAvailabilityPlaywright(headless: boolean): Promise<string> {
+async function fetchAvailabilityPlaywright(headless: boolean, facilityId: number): Promise<string> {
   const ctx = await getSharedAvailabilityContext(headless);
   const page = await ctx.newPage();
   try {
-    return await fetchAvailabilityHtml(page);
+    return await fetchAvailabilityHtml(page, facilityId);
   } finally {
     await page.close().catch(() => {});
   }
@@ -112,19 +113,23 @@ interface AvailabilitySnapshot {
   slots: Slot[];
   gridDays: GridDay[];
   via: "http" | "browser";
+  facilityId: number;
 }
 
 async function fetchAvailabilitySnapshot(opts: {
   allowBrowser: boolean;
   headless: boolean;
+  facilityId: number;
 }): Promise<AvailabilitySnapshot> {
+  const { facilityId } = opts;
   const started = Date.now();
+  const label = getFacility(facilityId).name;
   try {
-    const html = await fetchAvailabilityHttp();
-    const slots = filterBookable(parseAvailability(html));
+    const html = await fetchAvailabilityHttp(facilityId);
+    const slots = filterBookable(parseAvailability(html, facilityId));
     const gridDays = parseAvailabilityGrid(html);
-    log(`Availability fetched via HTTP in ${Date.now() - started}ms (${slots.length} open)`);
-    return { html, slots, gridDays, via: "http" };
+    log(`Availability ${label} (${facilityId}) via HTTP in ${Date.now() - started}ms (${slots.length} open)`);
+    return { html, slots, gridDays, via: "http", facilityId };
   } catch (err: any) {
     const httpErr = err?.message ?? err;
     const now = Date.now();
@@ -132,22 +137,22 @@ async function fetchAvailabilitySnapshot(opts: {
 
     if (!opts.allowBrowser || coolingDown) {
       const why = !opts.allowBrowser ? "browser disabled this cycle" : "browser cooldown active";
-      log(`HTTP availability failed (${httpErr}) — ${why}, skipping Playwright`);
+      log(`HTTP availability failed for ${label} (${httpErr}) — ${why}, skipping Playwright`);
       throw new Error(`HTTP_ONLY_UNAVAILABLE: ${httpErr}`);
     }
 
-    log(`HTTP availability failed (${httpErr}) — falling back to shared browser`);
+    log(`HTTP availability failed for ${label} (${httpErr}) — falling back to shared browser`);
     try {
-      const html = await fetchAvailabilityPlaywright(opts.headless);
+      const html = await fetchAvailabilityPlaywright(opts.headless, facilityId);
       if (!html.includes('class="tab-pane"')) {
         throw new Error("WAF_CHALLENGE");
       }
-      const slots = filterBookable(parseAvailability(html));
+      const slots = filterBookable(parseAvailability(html, facilityId));
       const gridDays = parseAvailabilityGrid(html);
-      log(`Availability fetched via browser in ${Date.now() - started}ms (${slots.length} open)`);
+      log(`Availability ${label} (${facilityId}) via browser in ${Date.now() - started}ms (${slots.length} open)`);
       // Warm profile succeeded — still cool down so we don't thrash if HTTP stays blocked.
       browserCooldownUntil = Date.now() + BROWSER_COOLDOWN_MS;
-      return { html, slots, gridDays, via: "browser" };
+      return { html, slots, gridDays, via: "browser", facilityId };
     } catch (browserErr: any) {
       browserCooldownUntil = Date.now() + BROWSER_COOLDOWN_MS;
       await closeSharedAvailabilityContext();
@@ -156,11 +161,21 @@ async function fetchAvailabilitySnapshot(opts: {
   }
 }
 
+function pollFacilityIds(scheduled: BookingAttempt[], cfg: TargetsConfig): number[] {
+  const ids = new Set(scheduled.map(attemptFacilityId));
+  if (cfg.enabled && cfg.targets.length > 0) ids.add(DEFAULT_FACILITY_ID);
+  return [...ids];
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
   const headless = opts.headless ?? false;
-  log("Watcher started — polling McCarren availability/11");
+  log(
+    `Watcher started — polling ${listFacilities()
+      .map((f) => `${f.name} availability/${f.id}`)
+      .join(", ")}`
+  );
   let wafBackoff = 0;
 
   while (true) {
@@ -171,6 +186,7 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
       const hasWork = cfg.enabled && (scheduled.length > 0 || cfg.targets.length > 0);
       const farFromDrop = isFarFromDrop(scheduled);
       const burst = inBurstWindow(scheduled.length > 0);
+      const facilityIds = pollFacilityIds(scheduled, cfg);
 
       if (!hasWork) {
         interval = DISABLED_MS;
@@ -187,11 +203,19 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
           `Far from drop (${drop?.toLocaleString() ?? "?"}) — HTTP-only poll every ${FAR_POLL_MS / 60_000}m`
         );
         try {
-          const snap = await fetchAvailabilitySnapshot({ allowBrowser: false, headless });
+          const snaps = new Map<number, AvailabilitySnapshot>();
+          for (const facilityId of facilityIds) {
+            snaps.set(
+              facilityId,
+              await fetchAvailabilitySnapshot({ allowBrowser: false, headless, facilityId })
+            );
+          }
           wafBackoff = 0;
-          log(`${snap.slots.length} open bookable slot(s), ${scheduled.length} scheduled attempt(s)`);
-          // Still evaluate miss if somehow published early; skip multi-pass browser thrash.
+          const openCount = [...snaps.values()].reduce((n, s) => n + s.slots.length, 0);
+          log(`${openCount} open bookable slot(s) across ${snaps.size} facility(ies), ${scheduled.length} scheduled attempt(s)`);
           for (const attempt of scheduled) {
+            const snap = snaps.get(attemptFacilityId(attempt));
+            if (!snap) continue;
             const miss = evaluateAttemptMiss(attempt, snap.gridDays);
             if (miss) {
               missAttempt(attempt.id, miss.reason);
@@ -209,25 +233,32 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
       } else {
         // Near drop: allow browser in midnight burst, or when cooldown has elapsed.
         const allowBrowser = burst || Date.now() >= browserCooldownUntil;
-        const snap = await fetchAvailabilitySnapshot({ allowBrowser, headless });
-        wafBackoff = 0;
-        log(`${snap.slots.length} open bookable slot(s), ${scheduled.length} scheduled attempt(s)`);
-
-        const fetchOpenSlots = async () => {
-          const fresh = await fetchAvailabilitySnapshot({
-            allowBrowser: burst || Date.now() >= browserCooldownUntil,
-            headless,
-          });
-          snap.slots = fresh.slots;
-          snap.gridDays = fresh.gridDays;
-          return fresh.slots;
+        const snaps = new Map<number, AvailabilitySnapshot>();
+        const snapFor = async (facilityId: number, fresh = false) => {
+          if (!fresh && snaps.has(facilityId)) return snaps.get(facilityId)!;
+          const snap = await fetchAvailabilitySnapshot({ allowBrowser, headless, facilityId });
+          snaps.set(facilityId, snap);
+          return snap;
         };
+
+        for (const facilityId of facilityIds) {
+          await snapFor(facilityId);
+        }
+        wafBackoff = 0;
+        const openCount = [...snaps.values()].reduce((n, s) => n + s.slots.length, 0);
+        log(`${openCount} open bookable slot(s) across ${snaps.size} facility(ies), ${scheduled.length} scheduled attempt(s)`);
 
         let booked = false;
 
         // Priority 1: scheduled booking attempts (explicit slot picks, 3-pass retry)
         if (cfg.enabled) {
           for (const attempt of scheduled) {
+            const facilityId = attemptFacilityId(attempt);
+            const snap = await snapFor(facilityId);
+            const fetchOpenSlots = async () => {
+              const fresh = await snapFor(facilityId, true);
+              return fresh.slots;
+            };
             const outcome = await runScheduledAttempt(attempt, fetchOpenSlots, {
               headless,
               initialOpenSlots: snap.slots,
@@ -248,14 +279,15 @@ export async function watch(opts: { headless?: boolean } = {}): Promise<void> {
           }
         }
 
-        // Priority 2: legacy yaml targets (first match)
+        // Priority 2: legacy yaml targets (first match) — McCarren / default facility
         if (!booked && cfg.enabled && cfg.targets.length > 0) {
+          const snap = await snapFor(DEFAULT_FACILITY_ID);
           const matches = matchSlots(snap.slots, cfg);
           log(`${matches.length} yaml target match(es)`);
           if (matches.length > 0) {
             const slot = matches[0];
             log(`YAML MATCH: ${slot.date} ${slot.day} ${slot.time24} court ${slot.court} — booking`);
-            const result = await book(slot, { headless });
+            const result = await book(slot, { headless, facilityId: DEFAULT_FACILITY_ID });
             if (result.ok && result.checkout) {
               const booking = onBookingSuccess(undefined, result.checkout);
               log(`Booked ${slot.date} ${slot.time24} — ${booking.reservationNumber}`);

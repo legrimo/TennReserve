@@ -1,11 +1,11 @@
+import { DEFAULT_FACILITY_ID, getFacility, type Facility } from "./facilities.js";
 import { weekdayOf } from "./parser.js";
 import type { GridCell, GridDay, CalendarSnapshot, DayZone } from "./types.js";
 
-export const MCCARREN_COURTS = [5, 6];
-/** Bookable 1-hour slot start times at McCarren (facility 11). */
-export const MCCARREN_HOURS = [
-  "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00",
-];
+/** @deprecated Use getFacility(11).courts */
+export const MCCARREN_COURTS = getFacility(11).courts;
+/** @deprecated Use getFacility(11).hours */
+export const MCCARREN_HOURS = getFacility(11).hours;
 
 export function todayIso(): string {
   const d = new Date();
@@ -18,11 +18,11 @@ export function addDays(iso: string, n: number): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
-function skeletonDay(date: string, published: boolean): GridDay {
+function skeletonDay(date: string, published: boolean, facility: Facility): GridDay {
   const day = weekdayOf(date);
   const cells: GridCell[] = [];
-  for (const time24 of MCCARREN_HOURS) {
-    for (const court of MCCARREN_COURTS) {
+  for (const time24 of facility.hours) {
+    for (const court of facility.courts) {
       cells.push({ date, day, court, time24, status: "unavailable" });
     }
   }
@@ -30,24 +30,25 @@ function skeletonDay(date: string, published: boolean): GridDay {
 }
 
 /** Computed calendar: today, published window (tomorrow..+7), staging (+8..+28). No Playwright. */
-export function buildCalendar(): CalendarSnapshot {
+export function buildCalendar(facilityId: number = DEFAULT_FACILITY_ID): CalendarSnapshot {
+  const facility = getFacility(facilityId);
   const today = todayIso();
   const dayZones: Record<string, DayZone> = {};
   const days: GridDay[] = [];
 
   dayZones[today] = "today";
-  days.push(skeletonDay(today, true));
+  days.push(skeletonDay(today, true, facility));
 
   for (let i = 1; i <= 7; i++) {
     const date = addDays(today, i);
     dayZones[date] = "published";
-    days.push(skeletonDay(date, true));
+    days.push(skeletonDay(date, true, facility));
   }
 
   for (let i = 8; i <= 28; i++) {
     const date = addDays(today, i);
     dayZones[date] = "staging";
-    days.push(skeletonDay(date, false));
+    days.push(skeletonDay(date, false, facility));
   }
 
   return {
@@ -55,6 +56,8 @@ export function buildCalendar(): CalendarSnapshot {
     msUntilMidnight: msUntilMidnight(),
     days,
     dayZones,
+    facilityId: facility.id,
+    courts: [...facility.courts],
   };
 }
 

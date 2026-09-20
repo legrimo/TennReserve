@@ -26,6 +26,10 @@ export function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+export function facilityIdOf(obj: { facilityId?: number } | null | undefined, fallback: number): number {
+  return obj?.facilityId ?? fallback;
+}
+
 /** e.g. "Monday 7-13" from slot metadata */
 export function formatSlotDayLabel(date: string, day: string): string {
   const [, mo, d] = date.split("-");

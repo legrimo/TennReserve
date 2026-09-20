@@ -1,21 +1,24 @@
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { FacilityPicker } from "@/components/FacilityPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAvailability } from "@/context/AvailabilityContext";
 import { createAttempt, fetchCalendar, type CalendarSnapshot } from "@/lib/api";
 import { capitalize } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
 export function NewAttemptPage() {
+  const { selectedFacilityId, setSelectedFacilityId, facilities, selectedFacility } = useAvailability();
   const [calendar, setCalendar] = useState<CalendarSnapshot | null>(null);
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchCalendar()
+    fetchCalendar(selectedFacilityId)
       .then(setCalendar)
       .catch((e) => toast.error(e.message));
-  }, []);
+  }, [selectedFacilityId]);
 
   const stagingDays = calendar?.days.filter((d) => calendar.dayZones[d.date] === "staging") ?? [];
 
@@ -24,7 +27,10 @@ export function NewAttemptPage() {
     try {
       const attempt = await createAttempt({
         targetDate,
-        name: targetDate ? `${capitalize(calendar!.days.find((d) => d.date === targetDate)!.day)} ${targetDate}` : undefined,
+        facilityId: selectedFacilityId,
+        name: targetDate
+          ? `${capitalize(calendar!.days.find((d) => d.date === targetDate)!.day)} ${targetDate}`
+          : undefined,
       });
       navigate(`/attempts/${attempt.id}`);
     } catch (e: any) {
@@ -38,8 +44,28 @@ export function NewAttemptPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">New booking attempt</h1>
-        <p className="text-muted-foreground">Pick a staging day or start blank and choose slots on the calendar.</p>
+        <p className="text-muted-foreground">
+          Pick a staging day or start blank and choose slots on the calendar.
+        </p>
       </div>
+
+      {facilities.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Court location</CardTitle>
+            <CardDescription>This attempt will book {selectedFacility?.name ?? "the selected facility"}.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FacilityPicker
+              facilities={facilities}
+              value={selectedFacilityId}
+              onChange={setSelectedFacilityId}
+              disabled={creating}
+              compact
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

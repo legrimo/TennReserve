@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { BOOKINGS_PATH, LEDGER_PATH, loadIdentity } from "./config.js";
+import { DEFAULT_FACILITY_ID, getFacility, resolveFacilityId } from "./facilities.js";
 import type { Booking, BookingRecord, CheckoutResult } from "./types.js";
 
 let migrated = false;
@@ -30,6 +31,7 @@ function migrateFromLedger(existing: Booking[]): Booking[] {
       court: row.court,
       slotId: row.slotId,
       location: "McCarren Park",
+      facilityId: DEFAULT_FACILITY_ID,
       reservationType: "Singles",
       paymentSuccess: true,
       paymentMethod: { type: "card", last4 },
@@ -50,7 +52,17 @@ export function readBookings(): Booking[] {
   if (existsSync(BOOKINGS_PATH)) {
     bookings = JSON.parse(readFileSync(BOOKINGS_PATH, "utf8"));
   }
-  return migrateFromLedger(bookings);
+  bookings = migrateFromLedger(bookings);
+  let changed = false;
+  for (const b of bookings) {
+    if (b.facilityId == null) {
+      b.facilityId = DEFAULT_FACILITY_ID;
+      if (!b.location) b.location = getFacility(DEFAULT_FACILITY_ID).name;
+      changed = true;
+    }
+  }
+  if (changed) writeBookings(bookings);
+  return bookings;
 }
 
 function writeBookings(bookings: Booking[]): void {
@@ -70,6 +82,7 @@ export function createBookingFromCheckout(
   scheduledBookingId?: string
 ): Booking {
   const { slot, reservationNumber, receiptScreenshot, amount, paymentMethod } = checkout;
+  const facilityId = resolveFacilityId(slot.facilityId);
   const booking: Booking = {
     id: randomUUID(),
     reservationNumber,
@@ -79,7 +92,8 @@ export function createBookingFromCheckout(
     time24: slot.time24,
     court: slot.court,
     slotId: slot.slotId,
-    location: "McCarren Park",
+    location: getFacility(facilityId).name,
+    facilityId,
     reservationType: "Singles",
     paymentSuccess: true,
     paymentMethod,

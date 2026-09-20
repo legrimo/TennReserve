@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Page, Locator } from "playwright";
 import { launchContext } from "./browser.js";
 import { SCREENSHOT_DIR, loadIdentity, type Identity } from "./config.js";
+import { DEFAULT_FACILITY_ID, resolveFacilityId } from "./facilities.js";
 import { openReservePage } from "./navigate.js";
 import { log, notifyBooking } from "./notify.js";
 import type { BookingResult, Slot } from "./types.js";
@@ -187,6 +188,8 @@ export interface BookOptions {
   headless?: boolean;
   /** When false, skip failure notifications (used during in-pass retries). Default true. */
   notifyOnFailure?: boolean;
+  /** Parks facility to open the availability grid for. Defaults to the slot's facilityId or McCarren. */
+  facilityId?: number;
 }
 
 /**
@@ -199,10 +202,14 @@ export async function book(slotOrId: Slot | string, opts: BookOptions = {}): Pro
   const page = await context.newPage();
   let slotId = typeof slotOrId === "string" ? slotOrId : slotOrId.slotId;
   let label = `#${slotId}`;
+  const facilityId = resolveFacilityId(
+    opts.facilityId ?? (typeof slotOrId === "object" ? slotOrId.facilityId : undefined) ?? DEFAULT_FACILITY_ID
+  );
 
   try {
-    log(`Booking slot #${slotId} — opening via availability page`);
-    const slot = await openReservePage(page, slotId);
+    log(`Booking slot #${slotId} (facility ${facilityId}) — opening via availability page`);
+    const slot = await openReservePage(page, slotId, facilityId);
+    slot.facilityId = facilityId;
     slotId = slot.slotId;
     label = `${slot.date} ${slot.time24} court ${slot.court} (#${slot.slotId})`;
 
