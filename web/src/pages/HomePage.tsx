@@ -202,6 +202,7 @@ export function HomePage() {
               facilities={facilities}
               value={selectedFacilityId}
               onChange={setSelectedFacilityId}
+              compact
             />
           </CardContent>
         </Card>

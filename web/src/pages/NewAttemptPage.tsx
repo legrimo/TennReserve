@@ -61,6 +61,7 @@ export function NewAttemptPage() {
               value={selectedFacilityId}
               onChange={setSelectedFacilityId}
               disabled={creating}
+              compact
             />
           </CardContent>
         </Card>
