@@ -9,6 +9,7 @@ import {
   LOG_PATH,
   type IdentityUpdate,
 } from "../config.js";
+import { facilitiesApiResponse, resolveFacilityId } from "../facilities.js";
 import { readBookings, getBooking } from "../bookings.js";
 import { readLedger } from "../ledger.js";
 import { matchSlots } from "../watcher.js";
@@ -52,6 +53,17 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/facilities", (_req, res) => {
+  res.json(facilitiesApiResponse());
+});
+
+function parseFacilityParam(raw: unknown): number {
+  if (raw == null || raw === "") return resolveFacilityId(undefined);
+  const n = parseInt(String(raw), 10);
+  if (Number.isNaN(n)) throw new Error("facilityId must be a number");
+  return resolveFacilityId(n);
+}
+
 app.get("/api/status", (_req, res) => {
   const cfg = loadTargets();
   let recentLog: string[] = [];
@@ -69,8 +81,12 @@ app.get("/api/status", (_req, res) => {
   });
 });
 
-app.get("/api/calendar", (_req, res) => {
-  res.json(getCalendar());
+app.get("/api/calendar", (req, res) => {
+  try {
+    res.json(getCalendar(parseFacilityParam(req.query.facilityId)));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get("/api/targets", (_req, res) => {
@@ -159,9 +175,14 @@ app.get("/api/bookings/:id/screenshot", (req, res) => {
 });
 
 app.get("/api/availability", async (req, res) => {
-  const force = req.query.refresh === "1";
-  const snapshot = await getAvailability(force);
-  res.json(snapshot);
+  try {
+    const force = req.query.refresh === "1";
+    const facilityId = parseFacilityParam(req.query.facilityId);
+    const snapshot = await getAvailability(force, facilityId);
+    res.json(snapshot);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get("/api/preview", async (_req, res) => {
@@ -188,13 +209,18 @@ app.get("/api/slots/resolve", async (req, res) => {
     res.status(400).json({ error: "date, time (HH:MM), and court required" });
     return;
   }
-  const snapshot = await getAvailability();
-  const result = resolveSlot(snapshot, date, time24, court);
-  if (!result.found) {
-    res.status(404).json({ date, time24, court, reason: result.reason });
-    return;
+  try {
+    const facilityId = parseFacilityParam(req.query.facilityId);
+    const snapshot = await getAvailability(false, facilityId);
+    const result = resolveSlot(snapshot, date, time24, court);
+    if (!result.found) {
+      res.status(404).json({ date, time24, court, facilityId, reason: result.reason });
+      return;
+    }
+    res.json(result.cell);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
-  res.json(result.cell);
 });
 
 app.get("/api/attempts", (_req, res) => {

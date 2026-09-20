@@ -1,7 +1,7 @@
 {
   "name": "tennreserve",
   "version": "0.1.0",
-  "description": "McCarren Park tennis court auto-booker (facility 11)",
+  "description": "NYC Parks tennis court auto-booker (McCarren Park, Mill Pond)",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,6 +18,8 @@
     "test:fetch": "tsx src/fetchAvailability.test.ts",
     "test:scheduled": "tsx src/scheduledAttemptRunner.test.ts",
     "test:miss": "tsx src/attemptMiss.test.ts",
+    "test:facilities": "tsx src/facilities.test.ts",
+    "test": "npm run test:parser && npm run test:fetch && npm run test:scheduled && npm run test:miss && npm run test:facilities",
     "probe-availability": "tsx src/probeAvailability.ts",
     "server": "tsx src/server/index.ts",
     "ui": "npm run dev --prefix web",

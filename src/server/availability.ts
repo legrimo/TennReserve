@@ -1,10 +1,13 @@
 import { fetchAvailabilityHttp } from "../fetchAvailability.js";
+import { DEFAULT_FACILITY_ID, getFacility } from "../facilities.js";
 import { parseAvailability, parseAvailabilityGrid } from "../parser.js";
 import { buildCalendar, mergeLiveGrid } from "../calendar.js";
 import type { CalendarSnapshot, GridDay, Slot } from "../types.js";
 
-let cache: { at: number; snapshot: CalendarSnapshot; slots: Slot[]; live: boolean; error?: string } | null =
-  null;
+const cache = new Map<
+  number,
+  { at: number; snapshot: CalendarSnapshot; slots: Slot[]; live: boolean; error?: string }
+>();
 const CACHE_MS = 45_000;
 
 export { msUntilMidnight } from "../calendar.js";
@@ -14,54 +17,63 @@ export interface AvailabilityResponse extends CalendarSnapshot {
   live: boolean;
   error?: string;
   slots: Slot[];
+  facilityName: string;
 }
 
-async function fetchLive(): Promise<{ gridDays: GridDay[]; slots: Slot[] }> {
-  const html = await fetchAvailabilityHttp();
+async function fetchLive(facilityId: number): Promise<{ gridDays: GridDay[]; slots: Slot[] }> {
+  const html = await fetchAvailabilityHttp(facilityId);
   return {
     gridDays: parseAvailabilityGrid(html),
-    slots: parseAvailability(html),
+    slots: parseAvailability(html, facilityId),
   };
 }
 
-export async function getAvailability(force = false): Promise<AvailabilityResponse> {
-  if (!force && cache && Date.now() - cache.at < CACHE_MS) {
-    const { snapshot, slots, live, error } = cache;
+export async function getAvailability(
+  force = false,
+  facilityId: number = DEFAULT_FACILITY_ID
+): Promise<AvailabilityResponse> {
+  const cached = cache.get(facilityId);
+  if (!force && cached && Date.now() - cached.at < CACHE_MS) {
+    const { snapshot, slots, live, error } = cached;
     return {
       ...snapshot,
-      fetchedAt: new Date(cache.at).toISOString(),
+      fetchedAt: new Date(cached.at).toISOString(),
       live,
       error,
       slots,
+      facilityName: getFacility(facilityId).name,
     };
   }
 
-  const base = buildCalendar();
+  const facilityName = getFacility(facilityId).name;
+  const base = buildCalendar(facilityId);
   try {
-    const { gridDays, slots } = await fetchLive();
+    const { gridDays, slots } = await fetchLive(facilityId);
     const merged = mergeLiveGrid(base, gridDays);
-    cache = { at: Date.now(), snapshot: merged, slots, live: true };
+    cache.set(facilityId, { at: Date.now(), snapshot: merged, slots, live: true });
     return {
       ...merged,
       fetchedAt: new Date().toISOString(),
       live: true,
       slots,
+      facilityName,
     };
   } catch (err: any) {
     const message = err?.message ?? String(err);
-    cache = { at: Date.now(), snapshot: base, slots: [], live: false, error: message };
+    cache.set(facilityId, { at: Date.now(), snapshot: base, slots: [], live: false, error: message });
     return {
       ...base,
       fetchedAt: new Date().toISOString(),
       live: false,
       error: message,
       slots: [],
+      facilityName,
     };
   }
 }
 
-export function getCalendar(): CalendarSnapshot {
-  return buildCalendar();
+export function getCalendar(facilityId: number = DEFAULT_FACILITY_ID): CalendarSnapshot {
+  return buildCalendar(facilityId);
 }
 
 export function resolveSlot(

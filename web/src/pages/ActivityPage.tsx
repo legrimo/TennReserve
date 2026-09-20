@@ -30,7 +30,7 @@ export function ActivityPage() {
       <Card>
         <CardHeader>
           <CardTitle>Bookings</CardTitle>
-          <CardDescription>Confirmed McCarren reservations with payment details</CardDescription>
+          <CardDescription>Confirmed reservations with payment details</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {bookings.length === 0 ? (

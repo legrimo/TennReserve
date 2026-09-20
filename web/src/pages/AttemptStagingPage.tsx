@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DayGrid } from "@/components/DayGrid";
+import { FacilityPicker } from "@/components/FacilityPicker";
 import { SlotQueue } from "@/components/SlotQueue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,8 @@ function pickKey(p: SlotPick) {
 export function AttemptStagingPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { availability, error: availabilityError } = useAvailability();
+  const { availability, error: availabilityError, facilities, selectedFacilityId, setSelectedFacilityId } =
+    useAvailability();
   const [attempt, setAttempt] = useState<BookingAttempt | null>(null);
   const [name, setName] = useState("");
   const [slots, setSlots] = useState<SlotPick[]>([]);
@@ -44,7 +46,8 @@ export function AttemptStagingPage() {
     if (a.slots[0]) {
       setSelectedDate(a.slots[0].date);
     }
-  }, [id]);
+    if (a.facilityId) setSelectedFacilityId(a.facilityId);
+  }, [id, setSelectedFacilityId]);
 
   useEffect(() => {
     load().catch((e) => toast.error(e.message));
@@ -68,11 +71,15 @@ export function AttemptStagingPage() {
     }
   }, [availability, attempt]);
 
-  const persist = async (nextSlots: SlotPick[], nextName?: string) => {
+  const persist = async (nextSlots: SlotPick[], nextName?: string, nextFacilityId?: number) => {
     if (!id || attempt?.status !== "draft") return;
     setSaving(true);
     try {
-      const updated = await updateAttempt(id, { slots: nextSlots, name: nextName ?? name });
+      const updated = await updateAttempt(id, {
+        slots: nextSlots,
+        name: nextName ?? name,
+        ...(nextFacilityId != null ? { facilityId: nextFacilityId } : {}),
+      });
       setAttempt(updated);
       setSlots(updated.slots);
     } catch (e: any) {
@@ -80,6 +87,15 @@ export function AttemptStagingPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const onFacilityChange = (nextId: number) => {
+    if (attempt?.status !== "draft") return;
+    setSelectedFacilityId(nextId);
+    const allowed = facilities.find((f) => f.id === nextId)?.courts ?? [];
+    const nextSlots = slots.filter((s) => allowed.includes(s.court));
+    setSlots(nextSlots);
+    void persist(nextSlots, name, nextId);
   };
 
   const toggleSlot = (pick: SlotPick) => {
@@ -192,6 +208,15 @@ export function AttemptStagingPage() {
             ? `Could not load availability — ${availabilityError}. Try Refresh or reload the page.`
             : "Live overlay unavailable — calendar skeleton still works for staging picks."}
         </div>
+      )}
+
+      {attempt.status === "draft" && facilities.length > 0 && (
+        <FacilityPicker facilities={facilities} value={selectedFacilityId} onChange={onFacilityChange} />
+      )}
+      {attempt.status !== "draft" && (
+        <p className="text-sm text-muted-foreground">
+          {facilities.find((f) => f.id === attempt.facilityId)?.name ?? `Facility ${attempt.facilityId}`}
+        </p>
       )}
 
       {attempt.status === "draft" && (

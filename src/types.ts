@@ -11,6 +11,8 @@ export interface Slot {
   slotId: string;
   /** Absolute reserve URL */
   url: string;
+  /** NYC Parks facility id this slot belongs to */
+  facilityId?: number;
 }
 
 export interface Target {
@@ -77,7 +79,7 @@ export interface BookingPaymentMethod {
   exp?: string;
 }
 
-/** Confirmed McCarren reservation after successful payment */
+/** Confirmed reservation after successful payment */
 export interface Booking {
   id: string;
   reservationNumber: string;
@@ -89,6 +91,8 @@ export interface Booking {
   court: number;
   slotId: string;
   location: string;
+  /** NYC Parks facility id; missing on pre-multi-facility rows (treat as 11). */
+  facilityId?: number;
   reservationType?: string;
 
   paymentSuccess: boolean;
@@ -129,6 +133,8 @@ export interface BookingAttempt {
   id: string;
   name?: string;
   status: AttemptStatus;
+  /** NYC Parks facility this attempt targets; missing rows default to 11. */
+  facilityId: number;
   slots: SlotPick[];
   createdAt: string;
   scheduledAt?: string;
@@ -150,4 +156,6 @@ export interface CalendarSnapshot {
   msUntilMidnight: number;
   days: GridDay[];
   dayZones: Record<string, DayZone>;
+  facilityId: number;
+  courts: number[];
 }

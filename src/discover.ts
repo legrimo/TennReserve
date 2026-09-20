@@ -2,7 +2,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright";
 import { launchContext } from "./browser.js";
-import { AVAILABILITY_URL, STORAGE_DIR, SCREENSHOT_DIR } from "./config.js";
+import { STORAGE_DIR, SCREENSHOT_DIR } from "./config.js";
+import { DEFAULT_FACILITY_ID, availabilityUrl } from "./facilities.js";
 import { parseAvailability } from "./parser.js";
 import { log } from "./notify.js";
 
@@ -62,7 +63,7 @@ async function dumpHoldTimer(page: Page): Promise<string | null> {
  * NOTE: clicking a reserve link likely places a temporary hold on the slot
  * until the countdown expires. Prefer running this against a slot you don't mind holding briefly.
  */
-export async function discover(slotIdOrUrl?: string): Promise<void> {
+export async function discover(slotIdOrUrl?: string, facilityId: number = DEFAULT_FACILITY_ID): Promise<void> {
   const context = await launchContext({ headless: false });
   const page = await context.newPage();
 
@@ -73,9 +74,10 @@ export async function discover(slotIdOrUrl?: string): Promise<void> {
     }
 
     if (!reserveUrl) {
-      log(`No slot specified — loading ${AVAILABILITY_URL} to find one`);
-      await page.goto(AVAILABILITY_URL, { waitUntil: "domcontentloaded" });
-      const slots = parseAvailability(await page.content());
+      const url = availabilityUrl(facilityId);
+      log(`No slot specified — loading ${url} to find one`);
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      const slots = parseAvailability(await page.content(), facilityId);
       if (slots.length === 0) {
         log("No available slots right now; try again with an explicit slot id: npm run discover -- <slotId>");
         return;

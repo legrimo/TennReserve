@@ -2,7 +2,7 @@
 
 enabled: true
 
-# Court preference order (McCarren: 5 and 6)
+# Court preference order (legacy yaml targets — McCarren courts 5 and 6)
 courts: [5, 6]
 
 targets:

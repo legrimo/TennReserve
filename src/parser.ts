@@ -36,14 +36,14 @@ export function weekdayOf(isoDate: string): string {
 
 /**
  * Parse the availability page for a facility into bookable slots.
- * Structure (verified against captured HTML for facility 11):
+ * Structure (verified against captured HTML for McCarren facility 11 and Mill Pond facility 4):
  *   <div id="2026-07-03" class="tab-pane">
  *     <h3>Friday, July 03, 2026</h3>
  *     <table><thead><tr><td/><th>Court 5</th><th>Court 6</th></tr></thead>
  *       <tbody><tr><td><strong>12:00 p.m.</strong></td>
  *         <td class="status2"><a href="/tennisreservation/reserve/699723" class="assign_someone ...">
  */
-export function parseAvailability(html: string): Slot[] {
+export function parseAvailability(html: string, facilityId?: number): Slot[] {
   const $ = cheerio.load(html);
   const slots: Slot[] = [];
 
@@ -93,6 +93,7 @@ export function parseAvailability(html: string): Slot[] {
                 court: courts[i],
                 slotId: m[1],
                 url: `${BASE_URL}${href}`,
+                ...(facilityId != null ? { facilityId } : {}),
               });
             });
           });

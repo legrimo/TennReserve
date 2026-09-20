@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AttemptSlotPanel } from "@/components/AttemptSlotPanel";
 import { DayGrid, type AttemptSlotMarker } from "@/components/DayGrid";
+import { FacilityPicker } from "@/components/FacilityPicker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +19,7 @@ import {
   type GridCell,
 } from "@/lib/api";
 import { mergeOwnedBookings } from "@/lib/calendarMerge";
-import { attemptLabel, capitalize, formatScheduledExecution, formatTime12 } from "@/lib/utils";
+import { attemptLabel, capitalize, facilityIdOf, formatScheduledExecution, formatTime12 } from "@/lib/utils";
 
 const statusVariant: Record<string, "default" | "secondary" | "success" | "warning" | "destructive" | "outline"> = {
   draft: "secondary",
@@ -30,7 +31,17 @@ const statusVariant: Record<string, "default" | "secondary" | "success" | "warni
 };
 
 export function HomePage() {
-  const { availability, loading, error, refreshedAt } = useAvailability();
+  const {
+    availability,
+    loading,
+    error,
+    refreshedAt,
+    facilities,
+    selectedFacilityId,
+    setSelectedFacilityId,
+    defaultFacilityId,
+    selectedFacility,
+  } = useAvailability();
   const [attempts, setAttempts] = useState<BookingAttempt[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [clockMs, setClockMs] = useState(() => Date.now());
@@ -115,6 +126,7 @@ export function HomePage() {
     () =>
       attempts
         .filter((a) => a.status === "scheduled" || a.status === "draft")
+        .filter((a) => facilityIdOf(a, defaultFacilityId) === selectedFacilityId)
         .flatMap((a) =>
           a.slots.map((slot, i) => ({
             attemptId: a.id,
@@ -125,12 +137,18 @@ export function HomePage() {
             slot,
           }))
         ),
-    [attempts]
+    [attempts, selectedFacilityId, defaultFacilityId]
   );
 
   const calendarWithBookings = useMemo(
-    () => (availability ? mergeOwnedBookings(availability, bookings) : null),
-    [availability, bookings]
+    () =>
+      availability
+        ? mergeOwnedBookings(
+            availability,
+            bookings.filter((b) => facilityIdOf(b, defaultFacilityId) === selectedFacilityId)
+          )
+        : null,
+    [availability, bookings, selectedFacilityId, defaultFacilityId]
   );
 
   const cancelTarget = attempts.find((a) => a.id === cancelId);
@@ -170,6 +188,25 @@ export function HomePage() {
         </div>
       )}
 
+      {facilities.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Court location</CardTitle>
+            <CardDescription>
+              Availability and new attempts use this facility. Default for a first visit is Mill Pond;
+              existing McCarren attempts still target McCarren.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FacilityPicker
+              facilities={facilities}
+              value={selectedFacilityId}
+              onChange={setSelectedFacilityId}
+            />
+          </CardContent>
+        </Card>
+      )}
+
       {calendarWithBookings && (
         <Card>
           <CardHeader>
@@ -184,7 +221,8 @@ export function HomePage() {
               )}
             </div>
             <CardDescription>
-              Four-week view — live NYC Parks slots for the next 7 days, your booking attempts on staging days through +28.
+              Four-week view for {selectedFacility?.name ?? "this facility"} — live NYC Parks slots for
+              the next 7 days, your booking attempts on staging days through +28.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -238,7 +276,14 @@ export function HomePage() {
             <p className="text-sm text-muted-foreground">No scheduled attempts.</p>
           ) : (
             scheduled.map((a) => (
-              <AttemptCard key={a.id} attempt={a} now={clockMs} onCancel={setCancelId} onDelete={onDelete} />
+              <AttemptCard
+                key={a.id}
+                attempt={a}
+                now={clockMs}
+                facilityName={facilities.find((f) => f.id === facilityIdOf(a, defaultFacilityId))?.name}
+                onCancel={setCancelId}
+                onDelete={onDelete}
+              />
             ))
           )}
         </CardContent>
@@ -251,7 +296,14 @@ export function HomePage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {other.map((a) => (
-              <AttemptCard key={a.id} attempt={a} now={clockMs} onCancel={setCancelId} onDelete={onDelete} />
+              <AttemptCard
+                key={a.id}
+                attempt={a}
+                now={clockMs}
+                facilityName={facilities.find((f) => f.id === facilityIdOf(a, defaultFacilityId))?.name}
+                onCancel={setCancelId}
+                onDelete={onDelete}
+              />
             ))}
           </CardContent>
         </Card>
@@ -263,11 +315,13 @@ export function HomePage() {
 function AttemptCard({
   attempt,
   now,
+  facilityName,
   onCancel,
   onDelete,
 }: {
   attempt: BookingAttempt;
   now: number;
+  facilityName?: string;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -281,6 +335,7 @@ function AttemptCard({
             <Badge variant={statusVariant[attempt.status] ?? "outline"}>{attempt.status}</Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
+            {facilityName ? `${facilityName} · ` : ""}
             {attempt.slots.length} slot(s)
             {top && (
               <>
