@@ -16,7 +16,7 @@ The dashboard **court location** picker defaults to **Mill Pond** (outdoor McCar
 
    ```bash
    npm install
-   npm run setup   # only needed for watcher/booking (Playwright + Chromium)
+   npm run setup   # only needed for watcher/booking (Playwright + Firefox/Chromium)
    ```
 
 3. **Secrets** — copy `.env.example` to `.env` and fill in the virtual card, billing address (must match the card for AVS), name, email, and phone. A permit number is **not** required to complete checkout (select "None" on the form). Never commit `.env`.
@@ -54,7 +54,7 @@ Open http://localhost:5173
 3. **Schedule** — watcher polls and books the first open slot in the queue when the day releases
 4. **Manage** — view, cancel, or delete attempts from the home screen
 
-Scheduled attempts live in `storage/attempts.json`. The calendar works offline (computed date grid); **live open/booked status on the dashboard uses a plain HTTP fetch** (no Playwright). Watcher and booking still need Playwright — run `npm run setup` once before using those.
+Scheduled attempts live in `storage/attempts.json`. The calendar works offline (computed date grid); **live open/booked status on the dashboard uses a plain HTTP fetch** (no Playwright). Watcher and booking still need Playwright — run `npm run setup` once before using those (installs Firefox + Chromium).
 
 **Calendar zones:**
 - **Current window** (tomorrow → +7 days) — on NYC Parks now; live availability via HTTP fetch
@@ -116,7 +116,7 @@ chown tennreserve:tennreserve /opt/TennReserve
 sudo -u tennreserve git clone <your-repo-url> /opt/TennReserve
 cd /opt/TennReserve
 sudo -u tennreserve npm ci
-sudo -u tennreserve npx playwright install --with-deps chromium
+sudo -u tennreserve npx playwright install --with-deps firefox chromium
 ```
 
 Install the systemd unit from the repo (paths assume `/opt/TennReserve` and user `tennreserve`):
@@ -130,6 +130,29 @@ journalctl -u tennreserve-watcher -f
 ```
 
 The unit runs `watch --headless` with `TZ=America/New_York`. Use `npm run watch:headless` for the same flags interactively.
+
+### Mobile proxy (Parks WAF) and Payflow bypass
+
+Always-on booker hosts in a datacenter are CloudFront-blocked for NYC Parks. Use **one** US-NY mobile HTTP proxy (e.g. MobileProxyNow) in `.env`:
+
+```bash
+PROXY_HTTP=http://USER:PASS@host:port
+TENNRESERVE_BROWSER=firefox          # default; system BROWSER is ignored
+# PROXY_BYPASS=                      # optional; see default below
+```
+
+| Traffic | Egress |
+| --- | --- |
+| `nycgovparks.org` (availability, checkout, `payment-endpoint/success`) | `PROXY_HTTP` |
+| Hosted Payflow / PayPal (`payflowlink.paypal.com`, `.paypal.com`, `.paypalobjects.com`) | **direct** (proxy bypass) |
+
+Parks-ok on the mobile proxy does **not** mean Payflow-ok — Payflow has failed with `590 UPSTREAM403` / `NS_ERROR_PROXY_CONNECTION_REFUSED` when the same browser sent payment hosts through that proxy. Do not add a second proxy for payment.
+
+Default `PROXY_BYPASS` (Playwright/Firefox format — leading-dot suffix, not `*.paypal.com`):
+
+`payflowlink.paypal.com,pilot-payflowlink.paypal.com,.paypal.com,.paypalobjects.com`
+
+Override with `PROXY_BYPASS` if the hosted redirect chain hits another payment host. **Never** put `nycgovparks.org` on that list: after Payflow, Parks posts back to `payment-endpoint/success` and that must stay on the mobile proxy. HTTP availability uses the same `PROXY_HTTP` via undici `ProxyAgent`. Logs redact proxy userinfo; they never print card numbers.
 
 ### Sync from your laptop
 
@@ -171,7 +194,7 @@ rsync -az tennreserve@YOUR_DROPLET_IP:/opt/TennReserve/storage/ledger.json stora
 
 - Books only slots starting **tomorrow through 7 days out** (site forbids same-day).
 - **One booking per day** — the ledger blocks duplicates.
-- Watcher polls every 60s, bursts to **3s** during 00:00–00:10 ET (00:00–00:30 when a scheduled attempt is active). When the earliest scheduled drop is **>12h away**, it polls every **15m over HTTP only** (no Chromium). Availability is HTTP-first; Playwright fallback uses a **shared browser context**, with a **~10m cooldown** after WAF/browser use so 1 GB hosts are not thrashing Chromium every minute. Scheduled attempts **skip passes 2–3** when the target day is not on the Parks grid yet.
+- Watcher polls every 60s, bursts to **3s** during 00:00–00:10 ET (00:00–00:30 when a scheduled attempt is active). When the earliest scheduled drop is **>12h away**, it polls every **15m over HTTP only** (no browser). Availability is HTTP-first; Playwright fallback uses a **shared browser context**, with a **~10m cooldown** after WAF/browser use so 1 GB hosts are not thrashing Firefox/Chromium every minute. Scheduled attempts **skip passes 2–3** when the target day is not on the Parks grid yet. The booker defaults to **Firefox** (`TENNRESERVE_BROWSER`); set `chromium` or `chrome` to override. With `PROXY_HTTP` set, Parks stays on that proxy and Payflow/PayPal hosts bypass it.
 - **Scheduled booking attempts** take priority over legacy yaml targets. Each attempt walks its slot queue in priority order, up to **3 full passes** per poll cycle (re-fetching between passes 2–3; pass 1 reuses the cycle fetch). If slots are not in the HTML yet, polling continues. If all target slots show **booked/unavailable** on the live grid, the attempt is auto-closed as **missed** with a reason you can inspect in the dashboard. Checkout failures after booking was attempted mark the attempt **failed**.
 - Booking failures notify immediately so you can grab the slot manually.
 

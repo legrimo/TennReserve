@@ -19,7 +19,7 @@ Usage:
   npx tsx src/index.ts slots        list current open slots and which match your targets
 
   --facility=<id>                   11 = McCarren Park (default), 4 = Mill Pond
-  --headless                        run Chromium headless
+  --headless                        run the booker browser headless (TENNRESERVE_BROWSER, default firefox)
 
 Weekly yaml targets still apply to McCarren. Dashboard booking attempts store facilityId.`;
 
