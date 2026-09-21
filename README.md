@@ -154,6 +154,15 @@ Default `PROXY_BYPASS` (Playwright/Firefox format — leading-dot suffix, not `*
 
 Override with `PROXY_BYPASS` if the hosted redirect chain hits another payment host. **Never** put `nycgovparks.org` on that list: after Payflow, Parks posts back to `payment-endpoint/success` and that must stay on the mobile proxy. HTTP availability uses the same `PROXY_HTTP` via undici `ProxyAgent`. Logs redact proxy userinfo; they never print card numbers.
 
+The bypass split can be checked **without buying a mobile proxy** (and without charging a card). A loopback recorder stands in for `PROXY_HTTP`; CONNECT to Parks must hit it, CONNECT to Payflow/PayPal must not:
+
+```bash
+npm run test:proxy           # includes the split check
+npm run probe-proxy-split    # same check, printed as a table
+```
+
+That proves routing only. It does not prove a datacenter IP can pass Parks CloudFront — that still needs a real US-NY mobile egress.
+
 ### Sync from your laptop
 
 After staging/scheduling attempts with `npm run dev` locally:
