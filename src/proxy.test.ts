@@ -128,6 +128,16 @@ try {
   assert(!local.serverUrl.includes(":9"), "Playwright sees the local adapter, not the upstream port");
   await local.close();
   await local.close(); // idempotent
+
+  const { runLocalProxySplitCheck } = await import("./proxySplitCheck.js");
+  const split = await runLocalProxySplitCheck();
+  for (const row of split.rows) {
+    assert(
+      row.ok,
+      `${row.host} expected ${row.expected}, observed ${row.observed}`
+    );
+  }
+  assert(split.ok, "Parks CONNECT hits the local recorder; Payflow/PayPal do not");
 } finally {
   restoreEnv();
 }
