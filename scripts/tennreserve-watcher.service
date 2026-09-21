@@ -14,7 +14,7 @@ Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /opt/TennReserve/node_modules/tsx/dist/cli.mjs /opt/TennReserve/src/index.ts watch --headless
 Restart=always
 RestartSec=5
-# Chromium can use a fair amount of RAM during booking bursts.
+# Firefox/Chromium can use a fair amount of RAM during booking bursts.
 MemoryMax=1500M
 
 # Hardening (keep writable storage/ for attempts, ledger, profile, logs)

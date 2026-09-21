@@ -19,12 +19,13 @@
     "test:scheduled": "tsx src/scheduledAttemptRunner.test.ts",
     "test:miss": "tsx src/attemptMiss.test.ts",
     "test:facilities": "tsx src/facilities.test.ts",
-    "test": "npm run test:parser && npm run test:fetch && npm run test:scheduled && npm run test:miss && npm run test:facilities",
+    "test:proxy": "tsx src/proxy.test.ts",
+    "test": "npm run test:parser && npm run test:fetch && npm run test:scheduled && npm run test:miss && npm run test:facilities && npm run test:proxy",
     "probe-availability": "tsx src/probeAvailability.ts",
     "server": "tsx src/server/index.ts",
     "ui": "npm run dev --prefix web",
     "dev": "concurrently -n api,ui -c blue,green \"npm run server\" \"npm run ui\"",
-    "setup": "playwright install chromium"
+    "setup": "playwright install firefox chromium"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
@@ -33,6 +34,8 @@
     "express": "^5.2.1",
     "nodemailer": "^9.0.3",
     "playwright": "^1.49.0",
+    "proxy-chain": "^2.5.9",
+    "undici": "^7.19.0",
     "yaml": "^2.6.0"
   },
   "devDependencies": {
